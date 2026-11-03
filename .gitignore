@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# Môi trường riêng trong thư mục tool. Máy mới tự tạo lại khi mở run.bat.
+.venv/
+
 # Ảnh chụp thử và CSV mỗi lượt chạy. Tool tự tạo thư mục khi cần.
 logs/
 

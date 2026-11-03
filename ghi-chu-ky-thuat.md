@@ -6,8 +6,7 @@ Những điều đã chốt khi dựng tool. Đọc file này trước khi sửa
 
 Game chạy trong **LDPlayer 9**, màn hình **dọc 720×1280**. Tool không chiếm chuột Windows. Mọi cú bấm và lần chụp đi qua **ADB**:
 
-- `adb` của LDPlayer: `D:\LDPlayer\LDPlayer9\adb.exe`
-- Điều khiển giả lập: `D:\LDPlayer\LDPlayer9\ldconsole.exe`
+- `adb.exe` và `ldconsole.exe` nằm cạnh nhau trong thư mục cài LDPlayer. Tool lấy thư mục đó từ registry gỡ cài đặt, rồi mới thử các chỗ thường gặp trên từng ổ đĩa (`X:\LDPlayer\LDPlayer9`, Program Files). Không gắn một đường dẫn của một máy.
 - Máy thường hiện là `emulator-5554`. Nếu chưa thấy, tool thử `ldconsole adb` rồi `adb connect 127.0.0.1:<cổng>`.
 - Chụp màn hình: `adb exec-out screencap -p`, giải mã thẳng. **Đừng thay `\r\n` thành `\n`**: `exec-out` của adb LDPlayer 9 giữ nguyên byte, mà dữ liệu PNG nén luôn có vài cặp `0D 0A` ngẫu nhiên (4 đến 13 cặp mỗi ảnh). Thay vào là hỏng 8/8 ảnh, và mỗi lần chụp rơi xuống đường dự phòng bên dưới, chậm gấp đôi. Tool chỉ thử thay `\r\n` khi giải mã thẳng thất bại. Đường dự phòng: chụp ra `/sdcard/coc_gift_cap.png` rồi kéo về `logs/cap.png`.
 - Bấm: `adb shell input tap x y`. Gõ UID: `adb shell input text` (chỉ chữ số). Xóa ô cũ: phím `123` (về cuối dòng) rồi nhiều lần `67` (xóa).
@@ -18,7 +17,7 @@ ADB phải bật trong LDPlayer (Cài đặt → Khác → Gỡ lỗi ADB). Tron
 
 Không có DOM. Mỗi nút là một file PNG trong `templates/`. OpenCV so mẫu (`TM_CCOEFF_NORMED`), điểm từ 0 đến 1. Ảnh chụp được thu về bề rộng tối đa 640px rồi mới so, tọa độ bấm được nhân lại ra ảnh gốc.
 
-`screen_w` trong `gift_tool/vision.py` là bề rộng ảnh lúc cắt mẫu. Đổi độ phân giải emulator là phải cắt lại mẫu.
+`screen_w` trong `gift_tool/vision.py` là bề rộng ảnh lúc cắt mẫu. Cùng tỉ lệ 9:16 thì đổi độ phân giải không cần cắt lại. Ảnh chụp có viền đen, hoặc khung không còn 9:16, thì tool cắt viền và thử thêm tỉ lệ cao trước khi kết luận không thấy người chơi.
 
 | Mẫu | Cắt từ đâu | Ngưỡng | Ghi chú |
 |---|---|---|---|

@@ -143,6 +143,8 @@ def main():
     if finder.find(goldrush, "close") is None:
         raise SystemExit("Màn goldrush phải thấy nút X")
 
+    _assert_other_frames(finder, img3, imread(notice))
+
     gift5 = finder.find(by_prefix["5"][0], "gift")
     gift9 = finder.find(by_prefix["9"][0], "gift")
     if gift5 is None:
@@ -151,6 +153,49 @@ def main():
         raise SystemExit(f"Ảnh 9 không được nhận nhầm hộp quà, điểm {gift9.score:.2f}")
     print(f"gift ảnh 5 = {gift5.score:.2f} tại ({gift5.x},{gift5.y}); ảnh 9 không có quà")
     print("self-test ok")
+
+
+def _letterbox(image, width: int, height: int, bar: int):
+    """Đặt ảnh game vào khung lớn hơn, viền đen đều. Giống screencap có thanh đen."""
+    canvas = np.zeros((height, width, 3), np.uint8)
+    src_h, src_w = image.shape[:2]
+    avail_w = width - 2 * bar
+    avail_h = height - 2 * bar
+    scale = min(avail_w / src_w, avail_h / src_h)
+    tw, th = max(1, int(src_w * scale)), max(1, int(src_h * scale))
+    resized = cv2.resize(image, (tw, th), interpolation=cv2.INTER_AREA)
+    x0 = (width - tw) // 2
+    y0 = (height - th) // 2
+    canvas[y0 : y0 + th, x0 : x0 + tw] = resized
+    return canvas
+
+
+def _assert_other_frames(finder, found, notice) -> None:
+    """ID có thật vẫn phải thấy hàng Results khi khung không còn đúng 9:16."""
+    framed = _letterbox(found, 720, 1280, 24)
+    search = finder.find(framed, "search", scales=(1.0,))
+    results = finder.find(framed, "results", scales=(1.0,))
+    add = finder.find(framed, "add", scales=(1.0,))
+    if search is None or results is None or add is None:
+        raise SystemExit("Khung có viền đen phải thấy kính lúp, Results và Add")
+    if finder.find(framed, "missing_id", scales=(1.0,)) is not None:
+        raise SystemExit("Hàng kết quả trong khung có viền không được nhận là ID sai")
+    level = player_level(framed, add)
+    if level != 299:
+        raise SystemExit(f"Khung có viền đen phải đọc cấp 299, ra {level}")
+
+    tall = cv2.resize(found, (720, 1600), interpolation=cv2.INTER_AREA)
+    if finder.find(tall, "results", scales=(1.0,)) is None or finder.find(tall, "add", scales=(1.0,)) is None:
+        raise SystemExit("Khung cao hơn 9:16 phải thấy Results và Add")
+    if finder.find(tall, "missing_id", scales=(1.0,)) is not None:
+        raise SystemExit("Khung cao không được nhận hàng kết quả là ID sai")
+    level = player_level(tall, finder.find(tall, "add", scales=(1.0,)))
+    if level != 299:
+        raise SystemExit(f"Khung bị kéo dọc phải đọc cấp 299, ra {level}")
+
+    missing = _letterbox(notice, 720, 1280, 24)
+    if finder.find(missing, "results", scales=(1.0,)) is not None:
+        raise SystemExit("Thông báo ID sai trong khung có viền không được nhận là Results")
 
 
 if __name__ == "__main__":

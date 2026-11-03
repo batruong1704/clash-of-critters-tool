@@ -12,18 +12,12 @@ ADB trong LDPlayer phải bật: Cài đặt giả lập → mục Khác → **G
 
 ## Mở tool
 
-Double-click `run.bat` trong thư mục này.
+Double-click `run.bat` trong thư mục này. Lần đầu trên máy mới, file này tự tạo `.venv` ngay trong thư mục tool và cài thư viện trong `requirements.txt`. Copy sang máy khác thì mở lại `run.bat`, không cần đường dẫn của máy cũ.
 
-Hoặc mở terminal tại thư mục tool và chạy:
-
-```bat
-py -3 main.py
-```
-
-Lần đầu trên máy mới, cài thư viện:
+Muốn chạy tay trong terminal tại thư mục tool:
 
 ```bat
-py -3 -m pip install -r requirements.txt
+.venv\Scripts\python.exe main.py
 ```
 
 ## Các nút

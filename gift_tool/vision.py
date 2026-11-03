@@ -31,6 +31,12 @@ SPECS = {
 
 SCALES = (0.86, 0.95, 1.0, 1.05, 1.14)
 WORK_WIDTH = 640
+# Mẫu cắt từ khung 9:16. Viền đen hoặc khung cao hơn làm nút Add lệch tỉ lệ này.
+REF_WIDTH = 720
+REF_HEIGHT = 1280
+BAR_MEAN = 22
+BAR_STD = 12
+BAR_MIN = 8
 # Tab Add New nằm dưới nút Community, lệch trái. Đo trên ảnh 559x1004.
 ADD_NEW_TAB_X = 0.18
 ADD_NEW_TAB_BELOW_COMMUNITY = 0.093
@@ -84,6 +90,7 @@ class Hit:
     score: float
     w: int
     h: int
+    aspect: float = 1.0
 
 
 class Finder:
@@ -118,16 +125,17 @@ class Finder:
         hit = self.find(screen[top:bottom], name, scales)
         if hit is None:
             return None
-        return Hit(hit.name, hit.x, hit.y + top, hit.score, hit.w, hit.h)
+        return Hit(hit.name, hit.x, hit.y + top, hit.score, hit.w, hit.h, hit.aspect)
 
     def _match(self, screen, name: str, templ, spec, scales=None) -> tuple[float, Hit | None]:
-        screen_h, screen_w = screen.shape[:2]
+        view, origin_x, origin_y = _content_view(screen)
+        screen_h, screen_w = view.shape[:2]
         work_w = min(screen_w, WORK_WIDTH)
         ratio = work_w / screen_w
         if ratio < 0.999:
-            work = cv2.resize(screen, (work_w, max(1, int(screen_h * ratio))), interpolation=cv2.INTER_AREA)
+            work = cv2.resize(view, (work_w, max(1, int(screen_h * ratio))), interpolation=cv2.INTER_AREA)
         else:
-            work = screen
+            work = view
         base = work.shape[1] / spec["screen_w"]
         if spec.get("text"):
             src = letter_mask(templ)
@@ -140,19 +148,32 @@ class Finder:
             hay = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
         best_score = -1.0
         best: Hit | None = None
-        for scale in (SCALES if scales is None else scales):
-            tw = int(src.shape[1] * base * scale)
-            th = int(src.shape[0] * base * scale)
-            if tw < 8 or th < 8 or tw >= hay.shape[1] or th >= hay.shape[0]:
-                continue
-            sized = cv2.resize(src, (tw, th), interpolation=cv2.INTER_AREA if scale * base < 1 else cv2.INTER_LINEAR)
-            result = cv2.matchTemplate(hay, sized, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if max_val > best_score:
+        chosen = SCALES if scales is None else scales
+        for extra, aspect in _aspect_variants(screen_w, screen_h):
+            for scale in chosen:
+                factor = extra * scale
+                tw = int(src.shape[1] * base * factor)
+                th = int(src.shape[0] * base * factor * aspect)
+                if tw < 8 or th < 8 or tw >= hay.shape[1] or th >= hay.shape[0]:
+                    continue
+                shrinking = tw <= src.shape[1] and th <= src.shape[0]
+                sized = cv2.resize(src, (tw, th), interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR)
+                result = cv2.matchTemplate(hay, sized, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val <= best_score:
+                    continue
                 best_score = float(max_val)
-                cx = int(round((max_loc[0] + tw / 2) / ratio))
-                cy = int(round((max_loc[1] + th / 2) / ratio))
-                best = Hit(name, cx, cy, best_score, int(round(tw / ratio)), int(round(th / ratio)))
+                cx = origin_x + int(round((max_loc[0] + tw / 2) / ratio))
+                cy = origin_y + int(round((max_loc[1] + th / 2) / ratio))
+                best = Hit(
+                    name,
+                    cx,
+                    cy,
+                    best_score,
+                    int(round(tw / ratio)),
+                    int(round(th / ratio)),
+                    aspect,
+                )
         return best_score, best
 
 
@@ -211,11 +232,65 @@ def signature_diff(before, after) -> float:
     return float(np.mean(cv2.absdiff(before, after)))
 
 
+def _content_view(screen):
+    """Cắt viền đen nếu có cả hai cạnh đối diện. Một cạnh tối là nền game, giữ nguyên."""
+    gray = screen if screen.ndim == 2 else cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape[:2]
+
+    def span(mean, std):
+        limit = len(mean)
+        cap = max(1, limit // 5)
+        start = 0
+        while start < cap and mean[start] < BAR_MEAN and std[start] < BAR_STD:
+            start += 1
+        end = limit
+        while end > limit - cap and mean[end - 1] < BAR_MEAN and std[end - 1] < BAR_STD:
+            end -= 1
+        return start, end
+
+    col_mean = gray.mean(axis=0)
+    row_mean = gray.mean(axis=1)
+    x0, x1 = span(col_mean, gray.std(axis=0))
+    y0, y1 = span(row_mean, gray.std(axis=1))
+    if x0 < BAR_MIN or width - x1 < BAR_MIN:
+        x0, x1 = 0, width
+    if y0 < BAR_MIN or height - y1 < BAR_MIN:
+        y0, y1 = 0, height
+    if x0 == 0 and y0 == 0 and x1 == width and y1 == height:
+        return screen, 0, 0
+    return screen[y0:y1, x0:x1], x0, y0
+
+
+def _aspect_variants(width: int, height: int) -> tuple[tuple[float, float], ...]:
+    """(co đều, kéo cao). Khung 9:16 chỉ cần một kiểu. Khung khác thử thêm ảnh bị kéo và ảnh có viền."""
+    if width < 1 or height < 1:
+        return ((1.0, 1.0),)
+    stretch = (height / width) * (REF_WIDTH / REF_HEIGHT)
+    if abs(stretch - 1.0) < 0.04:
+        return ((1.0, 1.0),)
+    variants = [(1.0, 1.0), (1.0, stretch)]
+    if stretch < 1.0:
+        variants.append((stretch, 1.0))
+    return tuple(variants)
+
+
+def _flatten_frame(image, aspect: float):
+    """Trả lát ảnh về tỉ lệ chữ của mẫu sau khi khung bị kéo dọc."""
+    if abs(aspect - 1.0) < 0.04:
+        return image
+    height, width = image.shape[:2]
+    target = max(1, int(round(height / aspect)))
+    if target == height:
+        return image
+    return cv2.resize(image, (width, target), interpolation=cv2.INTER_AREA)
+
+
 def player_level(screen, add: Hit) -> int | None:
     """Cấp trên nhãn Lvl của hàng Results. Không đọc cấp thú ở phía trên màn hình."""
     badge = _level_badge(screen, add)
     if badge is None:
         return None
+    badge = _flatten_frame(badge, add.aspect)
     glyphs = _badge_digits(badge)
     if not glyphs:
         return None

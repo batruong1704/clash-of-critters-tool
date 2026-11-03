@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -13,14 +14,7 @@ import cv2
 import numpy as np
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-
-ADB_CANDIDATES = [
-    Path(r"D:\LDPlayer\LDPlayer9\adb.exe"),
-    Path(r"C:\Program Files\ldplayer9box\adb.exe"),
-]
-LDCONSOLE_CANDIDATES = [
-    Path(r"D:\LDPlayer\LDPlayer9\ldconsole.exe"),
-]
+_DRIVE_FIXED = 3
 CONNECT_PORTS = (5555, 5557, 5554, 5556, 5558, 5559, 5561)
 
 # Mã phím Android. Về cuối dòng rồi xóa lùi. Ô UID dài tối đa 15 chữ số, cộng một nhịp dự phòng.
@@ -29,24 +23,161 @@ KEY_DELETE = "67"
 CLEAR_COUNT = 16
 
 
-def _first_existing(paths: list[Path]) -> Path | None:
+def _unique_dirs(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result = []
     for path in paths:
-        if path.exists():
-            return path
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _dir_from_registry_value(value: str) -> Path | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        text = text[1:end] if end > 1 else text.strip('"')
+    else:
+        exe_at = text.lower().find(".exe")
+        text = text[: exe_at + 4] if exe_at != -1 else text.split()[0]
+    text = text.strip().strip('"')
+    if text.lower().endswith(",0"):
+        text = text[:-2].strip().strip('"')
+    if not text:
+        return None
+    path = Path(text)
+    return path.parent if path.suffix.lower() == ".exe" else path
+
+
+def _registry_dirs() -> list[Path]:
+    if sys.platform != "win32":
+        return []
+    import winreg
+
+    found: list[Path] = []
+    direct = (
+        (winreg.HKEY_CURRENT_USER, r"Software\leidian\LDPlayer9"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\leidian\LDPlayer9"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\leidian\LDPlayer9"),
+    )
+    for hive, subkey in direct:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                for name in ("InstallDir", "InstallPath", "Path"):
+                    try:
+                        value, _ = winreg.QueryValueEx(key, name)
+                    except OSError:
+                        continue
+                    directory = _dir_from_registry_value(str(value))
+                    if directory is not None:
+                        found.append(directory)
+        except OSError:
+            continue
+
+    uninstall_roots = (
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    )
+    for hive, subkey in uninstall_roots:
+        try:
+            root = winreg.OpenKey(hive, subkey)
+        except OSError:
+            continue
+        try:
+            count = winreg.QueryInfoKey(root)[0]
+            for index in range(count):
+                try:
+                    name = winreg.EnumKey(root, index)
+                    with winreg.OpenKey(root, name) as key:
+                        display, _ = winreg.QueryValueEx(key, "DisplayName")
+                        if "ldplayer" not in str(display).lower():
+                            continue
+                        for value_name in ("InstallLocation", "DisplayIcon", "UninstallString"):
+                            try:
+                                value, _ = winreg.QueryValueEx(key, value_name)
+                            except OSError:
+                                continue
+                            directory = _dir_from_registry_value(str(value))
+                            if directory is not None:
+                                found.append(directory)
+                                break
+                except OSError:
+                    continue
+        finally:
+            winreg.CloseKey(root)
+    return found
+
+
+def _fixed_drives() -> list[Path]:
+    if sys.platform != "win32":
+        return []
+    import ctypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    mask = int(kernel.GetLogicalDrives())
+    drives = []
+    for index in range(26):
+        if mask & (1 << index) == 0:
+            continue
+        root = f"{chr(65 + index)}:\\"
+        if kernel.GetDriveTypeW(root) == _DRIVE_FIXED:
+            drives.append(Path(root))
+    return drives
+
+
+def _install_dirs() -> list[Path]:
+    dirs = _registry_dirs()
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)", "LocalAppData"):
+        base = os.environ.get(env_name)
+        if not base:
+            continue
+        root = Path(base)
+        dirs.append(root / "ldplayer9box")
+        dirs.append(root / "LDPlayer" / "LDPlayer9")
+        dirs.append(root / "LDPlayer9")
+    for drive in _fixed_drives():
+        dirs.append(drive / "LDPlayer" / "LDPlayer9")
+        dirs.append(drive / "LDPlayer9")
+        dirs.append(drive / "ldplayer9box")
+    return _unique_dirs(dirs)
+
+
+def _ldplayer_home() -> Path | None:
+    """Thư mục cài LDPlayer trên máy này. adb.exe và ldconsole.exe nằm cạnh nhau trong đó."""
+    directories = _install_dirs()
+    for directory in directories:
+        if (directory / "adb.exe").is_file() and (directory / "ldconsole.exe").is_file():
+            return directory
+    on_path = which("adb")
+    if on_path:
+        directory = Path(on_path).resolve().parent
+        if (directory / "ldconsole.exe").is_file():
+            return directory
+    for directory in directories:
+        if (directory / "adb.exe").is_file():
+            return directory
     return None
 
 
 class AdbClient:
     def __init__(self):
-        found = _first_existing(ADB_CANDIDATES)
-        if found is None:
+        home = _ldplayer_home()
+        if home is not None:
+            self.adb = str(home / "adb.exe")
+            console = home / "ldconsole.exe"
+        else:
             on_path = which("adb")
             if not on_path:
                 raise FileNotFoundError("Không thấy adb.exe. Hãy cài LDPlayer.")
-            found = Path(on_path)
-        self.adb = str(found)
-        console = _first_existing(LDCONSOLE_CANDIDATES)
-        self.ldconsole = str(console) if console else None
+            self.adb = on_path
+            console = Path(on_path).resolve().with_name("ldconsole.exe")
+        self.ldconsole = str(console) if console.is_file() else None
         self.serial = ""
 
     def ensure_device(self) -> str:
