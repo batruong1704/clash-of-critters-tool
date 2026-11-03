@@ -23,6 +23,9 @@ BACK_THRESHOLD = 0.78
 # Nút Join cắt từ chat rộng 550. Thanh xám Expired trên cùng màn chỉ khớp khoảng 0.56.
 JOIN_THRESHOLD = 0.72
 JOIN_SCREEN_W = 550
+# Nút mũi tên tím cắt từ chat rộng 556. Màn đang ở đáy chỉ khớp khoảng 0.46.
+DOWN_THRESHOLD = 0.78
+DOWN_SCREEN_W = 556
 # Nền khung chat gần như trắng. Bản đồ, danh sách rally và màn một người đều tối hơn.
 CHAT_LIGHT = 0.50
 # Kính lúp Goldrush nằm bên trái. Kính lúp ô UID nằm bên phải.
@@ -70,6 +73,11 @@ def load_icons(finder: Finder) -> None:
         imread(ICON_DIR / "join.png"),
         {"threshold": JOIN_THRESHOLD, "screen_w": JOIN_SCREEN_W, "color": True},
     )
+    finder.add_template(
+        "down",
+        imread(ICON_DIR / "down.png"),
+        {"threshold": DOWN_THRESHOLD, "screen_w": DOWN_SCREEN_W, "color": True},
+    )
 
 
 def read_screen(finder: Finder, screen) -> Reading:
@@ -105,6 +113,19 @@ def chat_join_buttons(finder: Finder, screen) -> list[Hit]:
         view[y0:y1, x0:x1] = (244, 240, 236)
     hits.sort(key=lambda item: item.y)
     return hits
+
+
+def jump_down(finder: Finder, screen) -> Hit | None:
+    """Nút mũi tên tím bên phải. Chỉ hiện khi đang xem tin cũ, bấm để về tin mới nhất."""
+    hit = finder.find(screen, "down")
+    if hit is None:
+        return None
+    height, width = screen.shape[:2]
+    if hit.x < width * 0.75:
+        return None
+    if not (0.62 * height <= hit.y <= 0.86 * height):
+        return None
+    return hit
 
 
 def card_joins(reading: Reading) -> list[Hit]:

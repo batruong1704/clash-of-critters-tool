@@ -17,6 +17,7 @@ from rally_tool.vision import (
     bottom_join,
     card_joins,
     chat_join_buttons,
+    jump_down,
     list_joins,
     load_icons,
     read_screen,
@@ -57,6 +58,7 @@ class Runner:
         self._ready = False
         self._arm_sig = None
         self._returning = False
+        self._jumped = False
         self._scroll_logged = False
         self._list_slides = 0
         self._goldrush_hold = 0.0
@@ -90,6 +92,7 @@ class Runner:
             self._ready = False
             self._arm_sig = None
             self._returning = False
+            self._jumped = False
             self._scroll_logged = False
         if scene != "multi":
             self._list_slides = 0
@@ -147,14 +150,15 @@ class Runner:
                 self._arm_sig = sig
                 return
             self._ready = True
-        if self._returning or not self._snapped:
+        if self._returning:
+            if self._jump_latest(shot):
+                return
+            if self._jumped or self._nudge_bottom(shot):
+                self._arrive()
+            return
+        if not self._snapped:
             if self._nudge_bottom(shot):
                 self._snapped = True
-                if self._returning:
-                    self._returning = False
-                    self._parked = True
-                    self._climbed = 0
-                    self._bottom_check = time.time() + BOTTOM_RECHECK
             return
         if not self._parked and self._climbed < CHAT_SCROLLS:
             self._climb(shot)
@@ -196,6 +200,25 @@ class Runner:
         moved = signature_diff(before, scene_signature(after_shot))
         if moved < SCROLL_DIFF or self._climbed >= CHAT_SCROLLS:
             self._park(after_shot)
+
+    def _jump_latest(self, shot) -> bool:
+        """Bấm mũi tên tím để về tin mới. Không có nút thì để nhánh kéo xử lý."""
+        hit = jump_down(self.finder, shot)
+        if hit is None:
+            return False
+        self.log("Xuống tin mới nhất.")
+        self.adb.tap(hit.x, hit.y)
+        self._pause(*AFTER_TAP)
+        self._jumped = True
+        return True
+
+    def _arrive(self) -> None:
+        self._jumped = False
+        self._snapped = True
+        self._returning = False
+        self._parked = True
+        self._climbed = 0
+        self._bottom_check = time.time() + BOTTOM_RECHECK
 
     def _park(self, shot) -> None:
         self.log("Hết nút Join trong 10 tin. Đứng cuối chat chờ đợt sau.")

@@ -16,6 +16,7 @@ from rally_tool.flow import Runner
 from rally_tool.vision import (
     card_joins,
     chat_join_buttons,
+    jump_down,
     list_joins,
     load_icons,
     read_screen,
@@ -40,7 +41,7 @@ EXPECTED = {
 
 def _key(path: Path) -> str:
     name = path.name
-    for prefix in ("Step 3.1", "Step 4.1", "Step 1", "Step 2", "Step 3", "Step 4", "Step 5", "Step 6"):
+    for prefix in ("Step 3.1", "Step 4.1", "Step 1", "Step 2", "Step 3", "Step 4", "Step 5", "Step 6", "Step 7"):
         if name.startswith(prefix):
             return prefix
     raise SystemExit(f"Không đặt tên được ảnh {name}")
@@ -241,6 +242,69 @@ class _ScrollTape:
         return None
 
 
+def test_jump_down() -> None:
+    """Sau khi xem tin cũ, bấm mũi tên tím để về tin mới, không kéo dần."""
+    finder = _finder()
+    shots = _load()
+    if "Step 7" not in shots:
+        raise SystemExit("Thiếu ảnh nút mũi tên tím")
+    top = shots["Step 7"]
+    bottom = shots["Step 6"]
+    hit = jump_down(finder, top)
+    if hit is None:
+        raise SystemExit("Không thấy nút mũi tên tím khi đang xem tin cũ")
+    if jump_down(finder, bottom) is not None or jump_down(finder, shots["Step 2"]) is not None:
+        raise SystemExit("Tin mới nhất không được có nút mũi tên tím")
+    reading = read_screen(finder, top)
+    if reading.scene != "chat":
+        raise SystemExit(f"Màn có nút mũi tên phải là chat, ra {reading.scene}")
+    out = LOGS / "self-test-rally"
+    imwrite(out / "Step 7.png", draw_hits(top, [hit]))
+    stop = threading.Event()
+    tape = _DownTape(stop, top, bottom)
+    runner = Runner(tape, tape.log, stop, finder)
+    runner.quick = True
+    runner.poll = 0
+    runner._ready = True
+    runner._returning = True
+    runner.run()
+    if len(tape.taps) != 1:
+        raise SystemExit(f"Phải bấm đúng một lần mũi tên tím, ra {tape.taps}")
+    x, y = tape.taps[0]
+    if abs(x - hit.x) > 20 or abs(y - hit.y) > 20:
+        raise SystemExit(f"Bấm lệch mũi tên {(x, y)} so với {(hit.x, hit.y)}")
+    if tape.swipes:
+        raise SystemExit(f"Có nút mũi tên mà vẫn kéo: {tape.swipes}")
+    print("xuống tin mới: bấm mũi tên tím")
+
+
+class _DownTape:
+    def __init__(self, stop, top, bottom):
+        self.stop = stop
+        self.top = top
+        self.bottom = bottom
+        self.taps = []
+        self.swipes = []
+        self.n = 0
+
+    def screenshot(self):
+        self.n += 1
+        if self.n > 8:
+            self.stop.set()
+        if self.taps:
+            return self.bottom
+        return self.top
+
+    def tap(self, x: int, y: int) -> None:
+        self.taps.append((int(x), int(y)))
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 350) -> None:
+        self.swipes.append((int(y1), int(y2)))
+
+    def log(self, message: str) -> None:
+        return None
+
+
 def test_list_does_not_stick() -> None:
     """Ảnh không đổi sau cú bấm thì không bấm mãi một nút. Hai lần trượt thì bấm X."""
     shots = _load()
@@ -414,6 +478,7 @@ def main() -> None:
     test_loop()
     test_first_chat_does_not_tap_around()
     test_scrolls_until_newest()
+    test_jump_down()
     test_list_does_not_stick()
     test_reward()
     test_window()

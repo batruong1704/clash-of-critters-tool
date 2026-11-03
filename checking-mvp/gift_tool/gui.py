@@ -379,7 +379,7 @@ class App:
         ).pack(anchor="w", pady=(8, 0))
         ttk.Label(
             rally_tab,
-            text="Không thấy nút xanh thì kéo tới khi chạm tin mới nhất, rồi mới chờ đợt sau. Hộp hoàn thành rally thì bấm Confirm để đóng. Chạy đến khi bấm Dừng.",
+            text="Không thấy nút xanh thì kéo tới tin mới nhất. Tìm ở tin cũ xong thì bấm mũi tên tím bên phải để xuống. Hộp hoàn thành rally thì bấm Confirm để đóng. Chạy đến khi bấm Dừng.",
             style="CardHint.TLabel",
             wraplength=520,
         ).pack(anchor="w", pady=(8, 0))
