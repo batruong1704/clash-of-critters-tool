@@ -12,6 +12,7 @@ from gift_tool.vision import (
     field_point,
     imread,
     imwrite,
+    player_level,
     result_signature,
     signature_diff,
 )
@@ -57,6 +58,10 @@ def main():
     cv2.circle(marked, (fx, fy), 10, (0, 180, 0), 2)
     imwrite(out / "3-diem-bam.png", marked)
     print(f"avatar=({ax},{ay}) o_nhap=({fx},{fy}) add=({add.x},{add.y}) search=({search.x},{search.y})")
+    level = player_level(img3, add)
+    print(f"cấp hàng kết quả = {level}")
+    if level != 299:
+        raise SystemExit("Ảnh 3 phải đọc cấp 299 trên hàng Results")
 
     img2 = by_prefix["2"][0]
     search2 = finder.find(img2, "search")

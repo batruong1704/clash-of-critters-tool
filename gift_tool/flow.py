@@ -13,17 +13,20 @@ from gift_tool.vision import (
     Finder,
     avatar_point,
     field_point,
+    player_level,
     result_signature,
     scene_signature,
     signature_diff,
 )
 
 MAX_GIFTS = 20
+MIN_LEVEL = 150
 
 LABELS = {
     "da_nhan_qua": "đã nhận quà",
     "khong_co_qua": "không có quà",
     "id_sai": "ID sai",
+    "cap_thap": "false",
     "loi_timeout": "lỗi / timeout",
 }
 
@@ -31,6 +34,8 @@ BUTTON_NAMES = {
     "select": "Select",
     "ok": "OK",
 }
+
+LOG_INDENT = "  "
 
 RESULT_DIFF = 12.0
 TAP_DELAY = (0.22, 0.45)
@@ -49,7 +54,7 @@ PAN_DIFF = 15.0
 PAN_FOLLOW = 2.0
 GIFT_SCALES = (1.0, 1.05)
 UI_SCALES = (1.0,)
-EXIT_GAP = 0.9
+SEARCH_MIN_X = 0.55
 BACK_TIMEOUT = 6.0
 
 
@@ -71,34 +76,34 @@ class Runner:
         LOGS.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         csv_path = LOGS / f"ket-qua-{stamp}.csv"
-        self.log(f"Ghi log: {csv_path}")
+        self._log_note(f"Ghi log: {csv_path}")
         with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle)
             writer.writerow(["id", "trang_thai", "giay", "ghi_chu"])
             self._step("Kiểm tra hướng màn hình")
             shot = self._shot()
             if shot.shape[1] > shot.shape[0]:
-                self._step("Emulator đang ngang")
+                self._step("Emulator đang ngang", headline=True)
                 self.log("Emulator đang ngang. Hãy xoay dọc, giống ảnh mẫu, rồi chạy lại.")
                 return counts
             self._step("Kiểm tra ô nhập UID")
             if not self._search_ready(shot):
-                self._step("Chưa thấy ô nhập UID")
+                self._step("Chưa thấy ô nhập UID", headline=True)
                 self.log("Chưa thấy ô nhập UID. Hãy mở tab Add New trong game rồi bấm Bắt đầu.")
                 return counts
             for index, uid in enumerate(ids, start=1):
                 self._check()
                 if counts["da_nhan_qua"] >= self.max_gifts:
-                    self._step(f"Đủ {self.max_gifts} quà, dừng")
+                    self._step(f"Đủ {self.max_gifts} quà, dừng", headline=True)
                     self.log(f"Đủ {self.max_gifts} quà, dừng.")
                     break
                 self.log(f"[{index}/{len(ids)}] UID {uid} — đã nhận {counts['da_nhan_qua']}/{self.max_gifts}")
-                self._step(f"UID {uid} ({index}/{len(ids)})")
+                self._step(f"UID {uid} ({index}/{len(ids)})", headline=True)
                 started = time.time()
                 try:
                     status, note, ready = self.process_one(uid)
                 except Stopped:
-                    self._step("Dừng theo lệnh")
+                    self._step("Dừng theo lệnh", headline=True)
                     self.log("Đã dừng.")
                     break
                 except Exception as exc:
@@ -107,7 +112,7 @@ class Runner:
                 counts[status] += 1
                 writer.writerow([uid, LABELS[status], f"{seconds:.1f}", note])
                 handle.flush()
-                self.log(f"  {LABELS[status]} ({seconds:.1f}s). {note}")
+                self._log_note(f"{LABELS[status]} ({seconds:.1f}s). {note}")
                 if not ready:
                     self.log("Không thấy lại ô nhập UID. Dừng để khỏi bấm nhầm. Mở lại tab Add New rồi chạy tiếp các ID còn lại.")
                     break
@@ -118,9 +123,9 @@ class Runner:
     def process_one(self, uid: str) -> tuple[str, str, bool]:
         self._step("Tìm ô nhập UID")
         shot = self._shot()
-        search = self.finder.find(shot, "search")
+        search = self._uid_search(shot)
         if search is None:
-            self._step("Không thấy ô nhập UID")
+            self._step("Không thấy ô nhập UID", headline=True)
             return "loi_timeout", "không thấy ô tìm UID", False
 
         field_x, field_y = field_point(shot, search)
@@ -137,15 +142,25 @@ class Runner:
         self._step("Chờ kết quả tìm")
         shot, found = self._wait_search(SEARCH_TIMEOUT)
         if found is None:
-            self._step("Không thấy người chơi")
-            return "id_sai", "không thấy người chơi", self.finder.find(shot, "search", scales=UI_SCALES) is not None
+            self._step("Không thấy người chơi", headline=True)
+            return "id_sai", "không thấy người chơi", self._uid_search(shot, UI_SCALES) is not None
+
+        level = player_level(shot, found)
+        if level is not None and level < MIN_LEVEL:
+            self._step(f"Cấp {level}, dưới {MIN_LEVEL}", headline=True)
+            ready = self._uid_search(shot, UI_SCALES) is not None
+            return "cap_thap", f"cấp {level}, dưới {MIN_LEVEL}", ready
+        if level is None:
+            self._step("Không đọc được cấp, vẫn vào nhà")
+        else:
+            self._step(f"Cấp {level}")
 
         self._step("Bấm avatar")
         self.adb.tap(*avatar_point(shot, found))
         self._step("Chờ nút Visit")
         shot, visit = self._wait_visit()
         if visit is None:
-            self._step("Không thấy nút Visit")
+            self._step("Không thấy nút Visit", headline=True)
             return "loi_timeout", "không thấy nút Visit", self._search_ready(shot)
         self._step("Bấm Visit")
         self.adb.tap(visit.x, visit.y)
@@ -164,9 +179,6 @@ class Runner:
         close = self.finder.find(shot, "close")
         if close is not None:
             self.adb.tap(close.x, close.y)
-            return
-        height, width = shot.shape[:2]
-        self.adb.tap(int(width * 0.50), int(height * 0.96))
 
     def _collect_gift(self, shot) -> tuple[str, str, bool]:
         gift = self.finder.find(shot, "gift")
@@ -182,15 +194,15 @@ class Runner:
                 self.adb.tap(gift.x, gift.y)
             self._step("Chờ nút Select lần nữa")
             if not self._wait_tap("select", timeout=2):
-                self._step("Không thấy nút Select")
+                self._step("Không thấy nút Select", headline=True)
                 ready = self._back_to_search()
                 return "loi_timeout", "đã thấy hộp quà nhưng không thấy nút Select", ready
         self._step("Chờ nút OK")
         if not self._wait_tap("ok", timeout=3):
-            self._step("Không thấy nút OK")
+            self._step("Không thấy nút OK", headline=True)
             ready = self._back_to_search()
             return "loi_timeout", "đã bấm Select nhưng không thấy nút OK", ready
-        self._step("Đã bấm Select và OK")
+        self._step("Đã bấm Select và OK", headline=True)
         ready = self._back_to_search()
         return "da_nhan_qua", "đã bấm Select và OK", ready
 
@@ -301,12 +313,12 @@ class Runner:
             # Camera không trượt sau nhịp ngắn thì không có hộp. Critter nhấp không đủ độ lệch này.
             if signature_diff(anchor, scene_signature(shot)) >= PAN_DIFF:
                 return self._follow_gift()
-            self._step("Sân đứng yên, không có quà")
+            self._step("Sân đứng yên, không có quà", headline=True)
             return "no_gift"
         if anchor is None:
-            self._step("Chưa vào được nhà")
+            self._step("Chưa vào được nhà", headline=True)
             return "timeout"
-        self._step("Hết giờ trong nhà, không thấy hộp")
+        self._step("Hết giờ trong nhà, không thấy hộp", headline=True)
         return "no_gift"
 
     def _seen_gift(self, shot) -> bool:
@@ -319,7 +331,7 @@ class Runner:
         return self.finder.find(shot, "select", scales=UI_SCALES) is not None
 
     def _in_house(self, shot, visit) -> bool:
-        if visit is not None or self.finder.find(shot, "search", scales=UI_SCALES) is not None:
+        if visit is not None or self._uid_search(shot, UI_SCALES) is not None:
             return False
         close = self.finder.locate(shot, "close", scales=UI_SCALES)
         return close.w > 0 and close.score >= HOUSE_CLOSE_SCORE
@@ -333,7 +345,7 @@ class Runner:
             if self._seen_gift(self._shot()):
                 return "gift"
             self._pause(*POLL_PAUSE)
-        self._step("Hết nhịp đuổi, không thấy hộp")
+        self._step("Hết nhịp đuổi, không thấy hộp", headline=True)
         return "no_gift"
 
     def _wait_tap(self, name: str, timeout: float) -> bool:
@@ -357,49 +369,60 @@ class Runner:
         return False
 
     def _back_to_search(self) -> bool:
-        """Bấm thoát một lần rồi chỉ chờ kính lúp. Không bấm X liền tay kẻo đóng tab Add New."""
+        """Chỉ bấm đóng một lần. Cú thứ hai rơi trúng nút Goldrush giữa đáy sân."""
         self._step("Thoát về ô nhập UID")
         deadline = time.time() + BACK_TIMEOUT
-        tapped_at = 0.0
+        tapped = False
         while time.time() < deadline:
             self._check()
             shot = self._shot()
-            search = self.finder.find(shot, "search", scales=UI_SCALES)
-            visit = self.finder.find(shot, "visit", scales=UI_SCALES)
-            select = self.finder.find(shot, "select", scales=UI_SCALES)
-            ok = self.finder.find(shot, "ok", scales=UI_SCALES)
-            if search is not None and visit is None and select is None and ok is None:
+            if self._on_yard(shot):
+                self._step("Đang ở sân, không bấm Goldrush", headline=True)
+                self.log("Đang ở màn sân. Không bấm thêm kẻo vào Goldrush. Mở lại tab Add New rồi chạy tiếp.")
+                return False
+            if self._search_ready(shot, UI_SCALES):
                 self._step("Đã về ô nhập UID")
                 return True
-            if tapped_at and time.time() - tapped_at < EXIT_GAP:
+            if tapped:
                 self._pause(*POLL_PAUSE)
                 continue
+            select = self.finder.find(shot, "select", scales=UI_SCALES)
+            ok = self.finder.find(shot, "ok", scales=UI_SCALES)
+            visit = self.finder.find(shot, "visit", scales=UI_SCALES)
+            close = self.finder.locate(shot, "close", scales=UI_SCALES)
             if select is not None:
                 self._step("Bấm Select để thoát")
                 self.adb.tap(select.x, select.y)
+                tapped = True
             elif ok is not None:
                 self._step("Bấm OK để thoát")
                 self.adb.tap(ok.x, ok.y)
+                tapped = True
             elif visit is not None:
                 self._step("Đóng popup Visit")
                 self._dismiss_visit_popup(shot)
-            else:
-                close = self.finder.locate(shot, "close", scales=UI_SCALES)
-                if close.w > 0 and close.score >= HOUSE_CLOSE_SCORE:
-                    self._step("Bấm nút đóng")
-                    self.adb.tap(close.x, close.y)
-                else:
-                    self._step("Bấm mép dưới để thoát")
-                    height, width = shot.shape[:2]
-                    self.adb.tap(int(width * 0.50), int(height * 0.96))
-            tapped_at = time.time()
+                tapped = True
+            elif close.w > 0 and close.score >= HOUSE_CLOSE_SCORE:
+                self._step("Bấm nút đóng")
+                self.adb.tap(close.x, close.y)
+                tapped = True
             self._pause(*POLL_PAUSE)
         ready = self._search_ready(self._shot(), UI_SCALES)
         if ready:
             self._step("Đã về ô nhập UID")
         else:
-            self._step("Chưa thấy lại ô nhập UID")
+            self._step("Chưa thấy lại ô nhập UID", headline=True)
         return ready
+
+    def _uid_search(self, shot, scales=None):
+        """Kính lúp ô UID nằm bên phải. Kính lúp Goldrush nằm bên trái."""
+        hit = self.finder.find(shot, "search", scales=scales)
+        if hit is None or hit.x < shot.shape[1] * SEARCH_MIN_X:
+            return None
+        return hit
+
+    def _on_yard(self, shot) -> bool:
+        return self.finder.find(shot, "goldrush", scales=UI_SCALES) is not None
 
     def _dismiss_visit_popup(self, shot) -> None:
         # Nút Back của Android không đóng popup này. Bấm vùng tối bên phải.
@@ -414,7 +437,7 @@ class Runner:
 
     def _search_ready(self, shot, scales=None) -> bool:
         return (
-            self.finder.find(shot, "search", scales=scales) is not None
+            self._uid_search(shot, scales) is not None
             and self.finder.find(shot, "visit", scales=scales) is None
             and self.finder.find(shot, "select", scales=scales) is None
             and self.finder.find(shot, "ok", scales=scales) is None
@@ -434,9 +457,16 @@ class Runner:
         if self.stop.is_set():
             raise Stopped()
 
-    def _step(self, message: str) -> None:
-        if self.detail is not None:
-            self.detail(message)
+    def _step(self, message: str, *, headline: bool = False) -> None:
+        # Kết luận sát lề. Bước làm thụt vào để khỏi lẫn với kết quả.
+        if self.detail is None:
+            return
+        if not headline:
+            message = f"{LOG_INDENT}{message}"
+        self.detail(message)
+
+    def _log_note(self, message: str) -> None:
+        self.log(f"{LOG_INDENT}{message}")
 
     def _summary(self, counts: dict[str, int]) -> None:
         parts = [f"{LABELS[key]}: {counts[key]}" for key in LABELS]

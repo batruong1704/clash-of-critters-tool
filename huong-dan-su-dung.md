@@ -32,8 +32,9 @@ py -3 -m pip install -r requirements.txt
 |---|---|
 | Chụp thử | Kiểm tra đã nối được emulator. Ảnh lưu ở `logs/chup-thu.png` |
 | Kiểm tra nút | Khoanh các nút tool đang thấy, mở ảnh `logs/kiem-tra.png` |
-| Nhập danh sách | Tab dán hoặc nạp file UID, rồi bấm Bắt đầu |
-| Quét ID | Tab nhập ID đầu và số lần. Mỗi lần sau cộng thêm 1 |
+| Bắt đầu / Quét | Nút xanh dưới tab. Đổi theo tab đang mở |
+| Nhập danh sách | Dán hoặc nạp file UID |
+| Quét ID | Nhập ID đầu và số lần. Mỗi lần sau cộng thêm 1 |
 | Dừng | Dừng sau bước đang làm |
 | Xem chi tiết log | Mở ô log từng bước. Bấm lần nữa để ẩn |
 
@@ -55,13 +56,14 @@ Ví dụ:
 1. Gõ UID vào ô tìm và bấm kính lúp.
 2. Có hàng **Results** thì bấm avatar, rồi bấm **Visit**.
 3. Trong nhà có hộp quà vàng ở giữa thì bấm nhận, chọn một nút **Select**, rồi **OK**.
-4. Không có hộp quà thì bấm **X** để ra.
+4. Không có hộp quà thì bấm **X** một lần để ra. Không bấm X lần nữa, vì cú thứ hai đóng tab tìm kiếm và có thể đụng nút **Goldrush** ở sân.
 5. Không thấy người chơi thì bỏ qua UID đó.
-6. Đủ 20 quà, hết danh sách, hoặc hết số lần quét nối tiếp, thì dừng.
+6. Cấp dưới 150 thì ghi **false** và không vào nhà.
+7. Đủ 20 quà, hết danh sách, hoặc hết số lần quét nối tiếp, thì dừng.
 
 ## Quét ID
 
-Mở tab **Quét ID**, điền **ID đầu** và **Số lần**, rồi bấm **Quét**. Tool không đọc ô danh sách ở tab kia. ID đầu là lượt 1, lượt sau là ID đó cộng 1. Số lần 100 nghĩa là quét 100 ID rồi dừng, kể cả ID sai và nhà không có quà. Đủ 20 quà thì dừng sớm hơn.
+Mở tab **Quét ID**, điền **ID đầu** và **Số lần**, rồi bấm nút **Quét** ở thanh bên dưới. Tool không đọc ô danh sách ở tab kia. ID đầu là lượt 1, lượt sau là ID đó cộng 1. Số lần 100 nghĩa là quét 100 ID rồi dừng, kể cả ID sai và nhà không có quà. Đủ 20 quà thì dừng sớm hơn.
 
 ## Đọc kết quả
 
@@ -72,6 +74,7 @@ Mở tab **Quét ID**, điền **ID đầu** và **Số lần**, rồi bấm **Q
 | đã nhận quà | Đã bấm Select và OK |
 | không có quà | Vào nhà nhưng không thấy hộp quà |
 | ID sai | Không thấy người chơi với UID đó |
+| false | Có người chơi nhưng cấp dưới 150, không vào nhà |
 | lỗi / timeout | Kẹt một bước, ví dụ không thấy Visit hoặc không thấy lại ô tìm |
 
 Cuối lượt, log có dòng tổng bốn trạng thái trên.

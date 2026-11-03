@@ -8,21 +8,65 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from gift_tool.adb_client import AdbClient
-from gift_tool.flow import LABELS, MAX_GIFTS, Runner
+from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS, Runner
 from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
 
-WINDOW_WIDTH = 680
-COMPACT_HEIGHT = 580
+WINDOW_WIDTH = 840
+COMPACT_HEIGHT = 720
 DETAIL_PANEL = 420
 OPEN_WIDTH = WINDOW_WIDTH + DETAIL_PANEL
 OVERVIEW_LOG_LINES = 10
 DETAIL_LOG_LINES = 16
-HINT_WRAP = 640
+HINT_WRAP = 460
+UID_BOX_LINES = 7
+APP_BG = "#f3f4f6"
+CARD_BG = "#ffffff"
+BORDER = "#e4e7ec"
+ACCENT = "#1d4ed8"
+ACCENT_HOVER = "#1e40af"
+ACCENT_PRESS = "#1e3a8a"
+UI_FONT = ("Segoe UI", 10)
+UI_FONT_BOLD = ("Segoe UI", 10, "bold")
+TITLE_FONT = ("Segoe UI", 18, "bold")
+HINT_FONT = ("Segoe UI", 9)
+ID_FONT = ("Consolas", 12)
 UID_MIN_LEN = 4
 UID_MAX_LEN = 15
 SCAN_COUNT_DEFAULT = 100
 SCAN_COUNT_MAX = 5000
+# Nền trắng. Chữ đậm đủ tương phản ở cỡ 10. Xám chỉ dành cho bước phụ.
+LOG_BG = "#ffffff"
+LOG_FG = "#1f2328"
+LOG_MUTED = "#5c6570"
+LOG_OK = "#0e7a3d"
+LOG_WARN = "#8a5a00"
+LOG_BAD = "#b42318"
+LOG_FONT = ("Consolas", 10)
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng")
+BAD_MARKS = (
+    "lỗi",
+    "timeout",
+    "không thấy ô",
+    "không thấy nút",
+    "không thấy lại",
+    "chưa thấy lại",
+    "chưa thấy ô",
+    "chưa vào",
+    "hết giờ",
+    "hết nhịp",
+    "emulator đang ngang",
+)
+WARN_MARKS = (
+    "không thấy người chơi",
+    "không có quà",
+    "sân đứng yên",
+    "id sai",
+    "dưới ",
+    "dừng",
+    "bỏ ",
+    "chỉ quét",
+)
 
 
 def parse_ids(text: str) -> tuple[list[str], list[str], int]:
@@ -60,18 +104,154 @@ def scan_ids(start: str, count: int) -> list[str]:
     return ids
 
 
+def log_tone(line: str) -> str:
+    """Kết quả tô màu. Dòng UID và tổng kết giữ đen đậm. Bước làm chuyển xám."""
+    text = line.strip().lower()
+    if not text:
+        return "muted"
+    if text.startswith("tổng kết"):
+        return "strong"
+    if any(mark in text for mark in OK_MARKS):
+        return "ok"
+    if any(mark in text for mark in BAD_MARKS):
+        return "bad"
+    if any(mark in text for mark in WARN_MARKS):
+        return "warn"
+    if line.startswith(LOG_INDENT):
+        return "muted"
+    return "strong"
+
+
+def apply_theme(root: tk.Tk) -> None:
+    """Clam cho phép tô nút. Vista thì nút chính không khác nút phụ."""
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure(".", background=APP_BG, foreground=LOG_FG, font=UI_FONT)
+    style.configure("TFrame", background=APP_BG)
+    style.configure("Card.TFrame", background=CARD_BG)
+    style.configure("TLabel", background=APP_BG, foreground=LOG_FG, font=UI_FONT)
+    style.configure("Title.TLabel", background=APP_BG, foreground=LOG_FG, font=TITLE_FONT)
+    style.configure("Hint.TLabel", background=APP_BG, foreground=LOG_MUTED, font=HINT_FONT)
+    style.configure("Section.TLabel", background=APP_BG, foreground=LOG_MUTED, font=UI_FONT_BOLD)
+    style.configure("CardSection.TLabel", background=CARD_BG, foreground=LOG_MUTED, font=UI_FONT_BOLD)
+    style.configure("Card.TLabel", background=CARD_BG, foreground=LOG_FG, font=UI_FONT)
+    style.configure("CardHint.TLabel", background=CARD_BG, foreground=LOG_MUTED, font=HINT_FONT)
+    style.configure("Status.TLabel", background=APP_BG, foreground=LOG_MUTED, font=HINT_FONT)
+    style.configure("StatusOn.TLabel", background=APP_BG, foreground=LOG_OK, font=UI_FONT_BOLD)
+    style.configure(
+        "Segment.TButton",
+        background=APP_BG,
+        foreground=LOG_MUTED,
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=APP_BG,
+        padding=(14, 8),
+        font=UI_FONT,
+    )
+    style.map("Segment.TButton", background=[("active", "#e5e7eb")])
+    style.configure(
+        "SegmentOn.TButton",
+        background=CARD_BG,
+        foreground=LOG_FG,
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=CARD_BG,
+        padding=(14, 8),
+        font=UI_FONT_BOLD,
+    )
+    style.map("SegmentOn.TButton", background=[("active", CARD_BG)])
+    style.configure(
+        "TEntry",
+        fieldbackground=CARD_BG,
+        foreground=LOG_FG,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
+        padding=8,
+        font=ID_FONT,
+    )
+    style.configure(
+        "TSpinbox",
+        fieldbackground=CARD_BG,
+        foreground=LOG_FG,
+        bordercolor=BORDER,
+        arrowcolor=LOG_FG,
+        padding=6,
+        font=ID_FONT,
+    )
+    style.configure(
+        "Primary.TButton",
+        background=ACCENT,
+        foreground="#ffffff",
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=ACCENT,
+        padding=(18, 8),
+        font=UI_FONT_BOLD,
+    )
+    style.map(
+        "Primary.TButton",
+        background=[
+            ("disabled", "#e5e7eb"),
+            ("pressed", ACCENT_PRESS),
+            ("active", ACCENT_HOVER),
+        ],
+        foreground=[("disabled", "#6b7280")],
+    )
+    style.configure(
+        "Stop.TButton",
+        background=APP_BG,
+        foreground=LOG_MUTED,
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=APP_BG,
+        padding=(14, 8),
+        font=UI_FONT_BOLD,
+    )
+    style.map(
+        "Stop.TButton",
+        background=[("disabled", APP_BG), ("active", "#fde8e8"), ("!disabled", "#fde8e8")],
+        foreground=[("disabled", "#9ca3af"), ("!disabled", LOG_BAD)],
+    )
+    style.configure(
+        "Ghost.TButton",
+        background=APP_BG,
+        foreground=LOG_FG,
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=APP_BG,
+        padding=(10, 8),
+        font=UI_FONT,
+    )
+    style.map("Ghost.TButton", background=[("active", "#e5e7eb"), ("pressed", "#d1d5db")])
+    style.configure(
+        "CardGhost.TButton",
+        background=CARD_BG,
+        foreground=LOG_FG,
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=CARD_BG,
+        padding=(10, 6),
+        font=UI_FONT,
+    )
+    style.map("CardGhost.TButton", background=[("active", "#f3f4f6"), ("pressed", "#e5e7eb")])
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Nhận quà MVP — Clash of Critters")
+        self.root.title("Nhận quà MVP")
         self.root.minsize(WINDOW_WIDTH, COMPACT_HEIGHT)
         self.root.geometry(f"{WINDOW_WIDTH}x{COMPACT_HEIGHT}")
+        self.root.configure(bg=APP_BG)
+        apply_theme(root)
         self.stop = threading.Event()
         self.worker: threading.Thread | None = None
         self.finder = Finder()
         self.detail_open = False
+        self.scanning = False
 
-        self.body = ttk.Frame(root, padding=12)
+        self.body = ttk.Frame(root, padding=20)
         self.body.pack(fill="both", expand=True)
         self.body.columnconfigure(0, weight=1)
         self.body.rowconfigure(0, weight=1)
@@ -79,76 +259,107 @@ class App:
         frame = ttk.Frame(self.body)
         frame.grid(row=0, column=0, sticky="nsew")
 
+        header = ttk.Frame(frame)
+        header.pack(fill="x")
+        titles = ttk.Frame(header)
+        titles.pack(side="left", fill="x", expand=True)
+        ttk.Label(titles, text="Nhận quà MVP", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
-            frame,
-            text="Mở sẵn tab Add New (ô nhập UID). Lần đầu chỉ dán 1–2 ID. Nếu ADB đang tắt, bấm Chụp thử sẽ bật ADB và khởi động lại emulator một lần, rồi bạn mở lại game.",
+            titles,
+            text="Mở tab Add New, màn hình dọc. Lần đầu chỉ chạy 1–2 UID.",
+            style="Hint.TLabel",
             wraplength=HINT_WRAP,
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(2, 0))
+        self.device_var = tk.StringVar(value="Chưa nối")
+        self.device_label = ttk.Label(header, textvariable=self.device_var, style="Status.TLabel")
+        self.device_label.pack(side="right", anchor="ne")
 
-        self.device_var = tk.StringVar(value="Chưa kết nối emulator")
-        ttk.Label(frame, textvariable=self.device_var).pack(anchor="w", pady=(6, 6))
+        switch = ttk.Frame(frame)
+        switch.pack(anchor="w", pady=(16, 0))
+        self.list_seg = ttk.Button(
+            switch, text="Nhập danh sách", style="SegmentOn.TButton", command=self.show_list
+        )
+        self.list_seg.pack(side="left")
+        self.scan_seg = ttk.Button(switch, text="Quét ID", style="Segment.TButton", command=self.show_scan)
+        self.scan_seg.pack(side="left", padx=(4, 0))
 
-        buttons = ttk.Frame(frame)
-        buttons.pack(anchor="w")
-        ttk.Button(buttons, text="Chụp thử", command=self.capture_only).pack(side="left")
-        ttk.Button(buttons, text="Kiểm tra nút", command=self.preview).pack(side="left", padx=6)
+        self.card = ttk.Frame(frame, style="Card.TFrame", padding=14)
+        self.card.pack(fill="x", pady=(8, 0))
+        list_tab = ttk.Frame(self.card, style="Card.TFrame")
+        scan_tab = ttk.Frame(self.card, style="Card.TFrame")
+        self.list_page = list_tab
+        self.scan_page = scan_tab
 
-        notebook = ttk.Notebook(frame)
-        notebook.pack(fill="x", pady=(10, 0))
-        list_tab = ttk.Frame(notebook, padding=(0, 8, 0, 0))
-        scan_tab = ttk.Frame(notebook, padding=(0, 8, 0, 0))
-        notebook.add(list_tab, text="Nhập danh sách")
-        notebook.add(scan_tab, text="Quét ID")
+        ttk.Label(list_tab, text="Mỗi dòng một UID", style="Card.TLabel").pack(anchor="w")
+        self.ids = tk.Text(
+            list_tab,
+            height=UID_BOX_LINES,
+            font=ID_FONT,
+            bg=CARD_BG,
+            fg=LOG_FG,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+            padx=8,
+            pady=6,
+            borderwidth=0,
+            insertbackground=LOG_FG,
+        )
+        self.ids.pack(fill="x", pady=(8, 0))
+        ttk.Button(list_tab, text="Nạp file txt", style="CardGhost.TButton", command=self.load_file).pack(
+            anchor="w", pady=(8, 0)
+        )
 
-        ttk.Label(list_tab, text="Danh sách UID, mỗi dòng một ID").pack(anchor="w")
-        self.ids = tk.Text(list_tab, height=6, font=("Consolas", 11))
-        self.ids.pack(fill="x", pady=(2, 0))
-        list_row = ttk.Frame(list_tab)
-        list_row.pack(anchor="w", pady=(8, 0))
-        ttk.Button(list_row, text="Nạp file txt", command=self.load_file).pack(side="left")
-        self.start_btn = ttk.Button(list_row, text="Bắt đầu", command=self.start)
-        self.start_btn.pack(side="left", padx=(12, 0))
-
+        scan_tab.columnconfigure(0, weight=1)
+        ttk.Label(scan_tab, text="ID đầu", style="CardHint.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(scan_tab, text="Số lần", style="CardHint.TLabel").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.scan_start = ttk.Entry(scan_tab, width=18, font=ID_FONT)
+        self.scan_start.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.scan_count = ttk.Spinbox(scan_tab, from_=1, to=SCAN_COUNT_MAX, width=8, font=ID_FONT)
+        self.scan_count.set(str(SCAN_COUNT_DEFAULT))
+        self.scan_count.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(4, 0))
         ttk.Label(
             scan_tab,
-            text="ID đầu là lượt 1. Mỗi lần quét sau cộng thêm 1.",
-            wraplength=HINT_WRAP,
-        ).pack(anchor="w")
-        scan_row = ttk.Frame(scan_tab)
-        scan_row.pack(anchor="w", pady=(8, 0))
-        ttk.Label(scan_row, text="ID đầu").pack(side="left")
-        self.scan_start = ttk.Entry(scan_row, width=16, font=("Consolas", 11))
-        self.scan_start.pack(side="left", padx=(6, 0))
-        ttk.Label(scan_row, text="Số lần").pack(side="left", padx=(10, 4))
-        self.scan_count = tk.Spinbox(scan_row, from_=1, to=SCAN_COUNT_MAX, width=6)
-        self.scan_count.delete(0, "end")
-        self.scan_count.insert(0, str(SCAN_COUNT_DEFAULT))
-        self.scan_count.pack(side="left")
-        self.scan_btn = ttk.Button(scan_row, text="Quét", command=self.start_scan)
-        self.scan_btn.pack(side="left", padx=6)
+            text="ID đầu là lượt 1. Mỗi lần sau cộng thêm 1.",
+            style="CardHint.TLabel",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        list_tab.pack(fill="x")
+        self.root.update_idletasks()
+        page_height = max(list_tab.winfo_reqheight(), scan_tab.winfo_reqheight())
+        self.card.pack_propagate(False)
+        self.card.configure(height=page_height + 28)
 
-        run_row = ttk.Frame(frame)
-        run_row.pack(anchor="w", pady=(8, 0))
-        self.stop_btn = ttk.Button(run_row, text="Dừng", command=self.request_stop, state="disabled")
-        self.stop_btn.pack(side="left")
-        self.detail_btn = ttk.Button(run_row, text="Xem chi tiết log", command=self.toggle_detail)
-        self.detail_btn.pack(side="left", padx=6)
+        bar = ttk.Frame(frame)
+        bar.pack(fill="x", pady=(14, 0))
+        self.primary_btn = ttk.Button(bar, text="Bắt đầu", style="Primary.TButton", command=self.run_current)
+        self.primary_btn.pack(side="left")
+        self.stop_btn = ttk.Button(
+            bar, text="Dừng", style="Stop.TButton", command=self.request_stop, state="disabled"
+        )
+        self.stop_btn.pack(side="left", padx=(8, 0))
+        self.detail_btn = ttk.Button(bar, text="Xem chi tiết log", style="Ghost.TButton", command=self.toggle_detail)
+        self.detail_btn.pack(side="right")
+        ttk.Button(bar, text="Kiểm tra nút", style="Ghost.TButton", command=self.preview).pack(side="right")
+        ttk.Button(bar, text="Chụp thử", style="Ghost.TButton", command=self.capture_only).pack(side="right")
 
-        self.progress = tk.StringVar(value="Sẵn sàng")
-        ttk.Label(frame, textvariable=self.progress).pack(anchor="w", pady=(8, 2))
+        self.progress = tk.StringVar(value=f"Sẵn sàng · dừng sau {MAX_GIFTS} quà")
+        ttk.Label(frame, textvariable=self.progress).pack(anchor="w", pady=(12, 0))
 
-        overview = ttk.LabelFrame(frame, text="Log tổng quan", padding=4)
-        overview.pack(fill="x", pady=(4, 0))
+        ttk.Label(frame, text="TỔNG QUAN", style="Section.TLabel").pack(anchor="w", pady=(14, 6))
         self.log_box = tk.Text(
-            overview, height=OVERVIEW_LOG_LINES, state="disabled", font=("Consolas", 10), wrap="word"
+            frame, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.log_box.pack(fill="x")
+        self._paint_log(self.log_box)
 
-        self.detail_frame = ttk.LabelFrame(self.body, text="Log chi tiết", padding=4)
+        self.detail_frame = ttk.Frame(self.body, style="Card.TFrame", padding=14)
+        ttk.Label(self.detail_frame, text="CHI TIẾT", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
         self.detail_box = tk.Text(
-            self.detail_frame, height=DETAIL_LOG_LINES, state="disabled", font=("Consolas", 10), wrap="word"
+            self.detail_frame, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.detail_box.pack(fill="both", expand=True)
+        self._paint_log(self.detail_box)
 
     def load_file(self):
         path = filedialog.askopenfilename(filetypes=[("Text", "*.txt"), ("Tất cả", "*.*")])
@@ -164,13 +375,35 @@ class App:
             return
         ids, bad, duplicated = parse_ids(self.ids.get("1.0", "end"))
         if bad:
-            self.write("Bỏ qua dòng không phải UID: " + ", ".join(bad[:8]))
+            self.write("Bỏ qua dòng không phải UID: " + ", ".join(bad[:8]), note=True)
         if duplicated:
-            self.write(f"Bỏ {duplicated} ID trùng.")
+            self.write(f"Bỏ {duplicated} ID trùng.", note=True)
         if not ids:
             self.write("Chưa có UID hợp lệ.")
             return
         self._begin(ids)
+
+    def run_current(self):
+        if self.scanning:
+            self.start_scan()
+            return
+        self.start()
+
+    def show_list(self):
+        self.scanning = False
+        self.scan_page.pack_forget()
+        self.list_page.pack(fill="x")
+        self.list_seg.configure(style="SegmentOn.TButton")
+        self.scan_seg.configure(style="Segment.TButton")
+        self.primary_btn.configure(text="Bắt đầu")
+
+    def show_scan(self):
+        self.scanning = True
+        self.list_page.pack_forget()
+        self.scan_page.pack(fill="x")
+        self.list_seg.configure(style="Segment.TButton")
+        self.scan_seg.configure(style="SegmentOn.TButton")
+        self.primary_btn.configure(text="Quét")
 
     def start_scan(self):
         if self.worker and self.worker.is_alive():
@@ -190,15 +423,14 @@ class App:
             self.write("Không tạo được UID để quét.")
             return
         if len(ids) < count:
-            self.write(f"Chỉ quét tới {ids[-1]} vì UID dài quá 15 chữ số.")
+            self.write(f"Chỉ quét tới {ids[-1]} vì UID dài quá 15 chữ số.", note=True)
         self.write(f"Quét nối tiếp {len(ids)} ID, từ {ids[0]} đến {ids[-1]}.")
         self._begin(ids)
 
     def _begin(self, ids: list[str]):
         self.stop.clear()
         self._clear(self.detail_box)
-        self.start_btn.configure(state="disabled")
-        self.scan_btn.configure(state="disabled")
+        self.primary_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.progress.set(f"Đang chạy 0/{MAX_GIFTS} quà")
         self.worker = threading.Thread(target=self._run, args=(ids,), daemon=True)
@@ -237,7 +469,7 @@ class App:
             adb = AdbClient()
             serial = adb.ensure_device()
             self.write(f"Đã nối {serial}")
-            self.root.after(0, lambda s=serial: self.device_var.set(f"Đã nối {s}"))
+            self.root.after(0, lambda s=serial: self._set_device(s))
 
             def log(message: str):
                 self.write(message)
@@ -255,8 +487,7 @@ class App:
             self.write(f"Lỗi: {exc}")
             self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
         finally:
-            self.root.after(0, lambda: self.start_btn.configure(state="normal"))
-            self.root.after(0, lambda: self.scan_btn.configure(state="normal"))
+            self.root.after(0, lambda: self.primary_btn.configure(state="normal"))
             self.root.after(0, lambda: self.stop_btn.configure(state="disabled"))
 
     def _capture_only(self):
@@ -267,6 +498,7 @@ class App:
             path = LOGS / "chup-thu.png"
             imwrite(path, shot)
             height, width = shot.shape[:2]
+            self.root.after(0, lambda s=serial: self._set_device(s))
             self.write(f"Đã chụp {serial}: {width}x{height} → {path}")
         except Exception as exc:
             self.write(f"Lỗi chụp thử: {exc}")
@@ -282,27 +514,55 @@ class App:
                 hit = self.finder.locate(shot, name)
                 threshold = self.finder.templates[name][1]["threshold"]
                 mark = "thấy" if hit.score >= threshold and hit.w else "không"
-                lines.append(f"  {name}: {hit.score:.2f} ({mark})")
+                lines.append(f"{LOG_INDENT}{name}: {hit.score:.2f} ({mark})")
                 if hit.w and hit.score >= threshold:
                     hits.append(hit)
             path = LOGS / "kiem-tra.png"
             imwrite(path, draw_hits(shot, hits))
+            self.root.after(0, lambda s=serial: self._set_device(s))
             lines.append(f"Ảnh khoanh nút: {path}")
             self.write("\n".join(lines))
             self.root.after(0, lambda: __import__("os").startfile(path))
         except Exception as exc:
             self.write(f"Lỗi kiểm tra: {exc}")
 
-    def write(self, message: str):
+    def _set_device(self, serial: str) -> None:
+        self.device_var.set(f"Đã nối {serial}")
+        self.device_label.configure(style="StatusOn.TLabel")
+
+    def write(self, message: str, *, note: bool = False):
+        if note:
+            message = f"{LOG_INDENT}{message}"
         self._append(self.log_box, message)
 
     def write_detail(self, message: str):
         self._append(self.detail_box, message)
 
+    def _paint_log(self, box: tk.Text) -> None:
+        box.configure(
+            bg=LOG_BG,
+            fg=LOG_FG,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=BORDER,
+            padx=8,
+            pady=6,
+            borderwidth=0,
+            insertbackground=LOG_FG,
+        )
+        box.tag_configure("strong", foreground=LOG_FG, font=(*LOG_FONT, "bold"))
+        box.tag_configure("muted", foreground=LOG_MUTED, font=LOG_FONT)
+        box.tag_configure("ok", foreground=LOG_OK, font=(*LOG_FONT, "bold"))
+        box.tag_configure("warn", foreground=LOG_WARN, font=(*LOG_FONT, "bold"))
+        box.tag_configure("bad", foreground=LOG_BAD, font=(*LOG_FONT, "bold"))
+
     def _append(self, box: tk.Text, message: str):
         def append():
             box.configure(state="normal")
-            box.insert("end", message + "\n")
+            lines = message.splitlines() or [""]
+            for line in lines:
+                box.insert("end", line + "\n", log_tone(line))
             box.see("end")
             box.configure(state="disabled")
 

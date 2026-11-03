@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 from gift_tool.paths import TEMPLATES
 
@@ -21,10 +24,20 @@ SPECS = {
     "select": {"threshold": 0.75, "screen_w": 580, "color": False},
     "ok": {"threshold": 0.75, "screen_w": 584, "color": False},
     "missing_id": {"threshold": 0.70, "screen_w": 553, "color": False, "text": True},
+    "goldrush": {"threshold": 0.78, "screen_w": 560, "color": True},
 }
 
 SCALES = (0.86, 0.95, 1.0, 1.05, 1.14)
 WORK_WIDTH = 640
+BADGE_DARK = 60
+BADGE_MIN_W = 36
+DIGIT_SCORE = 0.64
+DIGIT_MARGIN = 0.08
+DIGIT_BOX = (16, 22)
+# Arial Bold đọc hụt chữ 1. Cấp dưới 150 gần như luôn có chữ 1, cả số thành rỗng và tool vẫn bấm Visit.
+FONT_FILES = ("malgunbd.ttf", "arialbd.ttf")
+FONT_PX = 28
+FONT_CANVAS = 64
 
 
 def letter_mask(image):
@@ -176,6 +189,124 @@ def result_signature(screen, search: Hit):
 
 def signature_diff(before, after) -> float:
     return float(np.mean(cv2.absdiff(before, after)))
+
+
+def player_level(screen, add: Hit) -> int | None:
+    """Cấp trên nhãn Lvl của hàng Results. Không đọc cấp thú ở phía trên màn hình."""
+    badge = _level_badge(screen, add)
+    if badge is None:
+        return None
+    glyphs = _badge_digits(badge)
+    if not glyphs:
+        return None
+    digits = []
+    for glyph in glyphs:
+        digit = _read_digit(glyph)
+        if digit is None:
+            return None
+        digits.append(digit)
+    if len(digits) > 4:
+        return None
+    return int("".join(digits))
+
+
+def _level_badge(screen, add: Hit):
+    """Nhãn đen ngay bên trái nút Add, dưới tên người chơi."""
+    height, width = screen.shape[:2]
+    x0 = int(add.x - 0.62 * width)
+    x1 = int(add.x - add.w * 0.70)
+    y0 = int(add.y - add.h * 0.05)
+    y1 = int(add.y + add.h * 0.55)
+    x0 = min(max(0, x0), width - 2)
+    x1 = min(max(x0 + 2, x1), width)
+    y0 = min(max(0, y0), height - 2)
+    y1 = min(max(y0 + 2, y1), height)
+    crop = screen[y0:y1, x0:x1]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    dark = (gray < BADGE_DARK).astype(np.uint8) * 255
+    dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        if w < BADGE_MIN_W or w < h * 1.6 or h < 12:
+            continue
+        if best is None or w * h > best[2] * best[3]:
+            best = (x, y, w, h)
+    if best is None:
+        return None
+    x, y, w, h = best
+    return gray[y : y + h, x : x + w]
+
+
+def _badge_digits(badge):
+    """Chữ số nằm nửa phải nhãn. Nửa trái là chữ Lvl."""
+    white = (badge > 170).astype(np.uint8) * 255
+    white[:2, :] = 0
+    white[-2:, :] = 0
+    white[:, :2] = 0
+    white[:, -2:] = 0
+    count, _, stats, _ = cv2.connectedComponentsWithStats(white, 8)
+    glyphs = []
+    for index in range(1, count):
+        x, y, w, h, area = stats[index]
+        if h < 8 or area < 8:
+            continue
+        glyphs.append((int(x), int(y), int(w), int(h)))
+    if not glyphs:
+        return []
+    tallest = max(item[3] for item in glyphs)
+    glyphs = [item for item in glyphs if item[3] >= tallest * 0.55]
+    width = badge.shape[1]
+    digits = []
+    for x, y, w, h in sorted(glyphs):
+        if x + w / 2 <= width * 0.46:
+            continue
+        digits.append(white[y : y + h, x : x + w])
+    return digits
+
+
+@lru_cache(maxsize=1)
+def _digit_bank() -> dict[str, np.ndarray]:
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    font_path = next((windir / "Fonts" / name for name in FONT_FILES if (windir / "Fonts" / name).exists()), None)
+    if font_path is None:
+        return {}
+    font = ImageFont.truetype(str(font_path), FONT_PX)
+    bank = {}
+    for digit in "0123456789":
+        image = Image.new("L", (FONT_CANVAS, FONT_CANVAS), 0)
+        ImageDraw.Draw(image).text((4, 4), digit, fill=255, font=font)
+        arr = np.array(image)
+        ys, xs = np.where(arr > 40)
+        if len(xs) == 0:
+            continue
+        crop = arr[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+        bank[digit] = cv2.resize(crop, DIGIT_BOX, interpolation=cv2.INTER_AREA)
+    return bank
+
+
+def _read_digit(glyph) -> str | None:
+    bank = _digit_bank()
+    if not bank:
+        return None
+    sample = cv2.resize(glyph, DIGIT_BOX, interpolation=cv2.INTER_AREA).astype(np.float32)
+    scores = {digit: _corr(sample, template.astype(np.float32)) for digit, template in bank.items()}
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    best, score = ranked[0]
+    second = ranked[1][1] if len(ranked) > 1 else -1.0
+    if score < DIGIT_SCORE or score - second < DIGIT_MARGIN:
+        return None
+    return best
+
+
+def _corr(sample, template) -> float:
+    left = sample - sample.mean()
+    right = template - template.mean()
+    scale = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if scale == 0:
+        return -1.0
+    return float((left * right).sum() / scale)
 
 
 def draw_hits(screen, hits: list[Hit]):
