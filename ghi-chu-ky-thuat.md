@@ -75,6 +75,27 @@ Quyết định:
 
 Ảnh kiểm tra: `resource/3. nhập id và tìm kiếm.png` phải đọc **299**. `py -3 -m gift_tool.self_test` dừng nếu ra số khác.
 
+## Các màn hình game tool có thể gặp
+
+Đo trên emulator thật. Cột cuối là việc `_open_uid_field` làm khi gặp màn đó.
+
+| Màn | Nhận ra bằng | Nút X đáy | Việc làm |
+|---|---|---|---|
+| Tab Add New | Kính lúp bên **phải** ô UID | Có | Xong |
+| Panel hồ sơ, tab Log hoặc Friends | Nút Community, không có kính lúp | Có | Bấm tab Add New |
+| Sân chính (Camp) | Icon Bạn bè bên phải, hàng nút Battle / Modes / Goldrush / Tatari / Pinball ở đáy | Không | Bấm icon Bạn bè |
+| Tab Pinball | Hàng nút đáy có Camp thay Pinball | Không | Như sân. Icon Bạn bè cùng kiểu, nằm trên nút Camp |
+| Goldrush | Kính lúp bên **trái**, nút Shop / Reports / Rewards / League | Có | Bấm X |
+| Trong nhà người khác | Nút X, không có kính lúp | Có | Bấm X |
+
+Ba điều dễ sai khi sửa:
+
+- **Goldrush vào chậm.** Bấm nút Goldrush ở sân thì khoảng 4 giây đầu là ảnh bản đồ phóng to, chưa có X. Khoảng 8 giây sau mới đủ giao diện. Tool không bấm gì lúc đó, chỉ chờ rồi chụp lại.
+- **Sân không có X.** Chỗ đáy giữa màn hình của sân là nút **Goldrush**. Bấm X ở đó là vào Goldrush.
+- **Ảnh `resource/1.` là ảnh cửa sổ LDPlayer** (397px, có thanh tiêu đề), không phải ảnh ADB. Mẫu Goldrush chỉ khớp 0.48 trên ảnh đó. Đừng cắt mẫu từ ảnh này.
+
+Ảnh chụp ADB thật là **720×1280**. Ảnh trong `resource/` rộng khoảng 560px, nên mỗi mẫu có `screen_w` riêng.
+
 ## Tự mở ô nhập UID
 
 Hàm `_open_uid_field` trong `gift_tool/flow.py`. Chạy ở đầu lượt, và mỗi khi mất ô nhập giữa chừng. Mỗi vòng chụp một ảnh, làm **đúng một việc** theo thứ tự dưới đây, rồi chụp lại:
@@ -117,14 +138,36 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 |---|---|
 | `main.py`, `run.bat` | Mở cửa sổ tool |
 | `gift_tool/gui.py` | Nút, ô dán UID, log |
-| `gift_tool/flow.py` | Luồng một UID |
-| `gift_tool/vision.py` | So ảnh mẫu |
+| `gift_tool/flow.py` | Luồng một UID, tự mò về ô nhập |
+| `gift_tool/vision.py` | So ảnh mẫu, đọc cấp |
 | `gift_tool/adb_client.py` | Chụp và bấm |
+| `gift_tool/paths.py` | Đường dẫn thư mục |
+| `gift_tool/self_test.py` | Kiểm tra mẫu ảnh trên ảnh có sẵn |
 | `templates/` | Ảnh mẫu nút |
-| `logs/` | CSV và ảnh chụp thử |
+| `resource/` | Ảnh chụp từng bước của game, dùng để cắt mẫu và chạy `self_test` |
+| `tools/build_templates.py` | Cắt mẫu từ `resource/` |
+| `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
+| `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
 | `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow` |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
+
+## Kiểm tra sau khi sửa
+
+1. `py -3 -m gift_tool.self_test` chạy trên ảnh có sẵn, không cần emulator. Dừng nếu cấp ảnh 3 không phải 299, hoặc một mẫu nhận nhầm màn.
+2. Sửa luồng bấm thì thử bằng emulator giả: một lớp có `screenshot()` và `tap()`, mỗi trạng thái là một ảnh thật trong `resource/`, chỉ đổi trạng thái khi bấm đúng chỗ. Cách này bắt được lỗi thứ tự bước mà không đụng game.
+3. Rồi mới thử trên emulator thật, bắt đầu từ từng màn trong bảng *Các màn hình game*. Dùng 1–2 UID đã biết kết quả. Ví dụ `42270085` là cấp 26, phải ra **false**.
+4. Tắt hẳn cửa sổ tool rồi mở lại `run.bat`. Cửa sổ đang mở vẫn chạy code cũ và giữ mẫu ảnh cũ trong bộ nhớ.
+
+Đừng bấm lên emulator khi tool đang quét. Hai bên tranh nhau bấm, UID đang xử lý có thể ghi lệch một dòng.
+
+## Git và phiên bản
+
+Repo git nằm ở **`check_mvp_tool/`**, không phải thư mục cha `my-tool/`. Chạy `git` ở thư mục cha sẽ báo không phải repo.
+
+`.gitignore` bỏ qua `__pycache__/`, `*.pyc`, `logs/` và `list_id.txt` (UID cá nhân). Các file này từng bị commit và đã gỡ khỏi git ở commit `82f2887`. Lịch sử cũ vẫn còn chúng.
+
+Mỗi lần push có một file trong `versions/`, tên `X.Y.Z.md`, bắt đầu từ `1.0.0`. Số cuối chạy 0 đến 9, quá thì tăng số giữa: `1.0.9` sang `1.1.0`. Cách làm nằm trong skill `ghi-log-phien-ban` (`.cursor/skills/`).
 
 ## Rủi ro
 
