@@ -5,7 +5,7 @@ Tool tự vào nhà từng UID trong Clash of Critters, nhận hộp quà MVP n�
 ## Trước khi mở tool
 
 1. Mở LDPlayer, vào Clash of Critters, để màn hình **dọc**.
-2. Mở tab **Add New**, thấy ô nhập UID và kính lúp bên phải.
+2. Không cần mở tab **Add New** trước. Đang ở sân chính, chế độ Goldrush, hoặc panel hồ sơ sai tab thì tool tự bấm về ô nhập UID. Màn lạ thì tool dừng và lưu ảnh ở `logs/khong-nhan-ra-man.png`.
 3. Lần đầu nên dùng **tài khoản phụ** và chỉ dán **1–2 UID**. Game có thể khóa tài khoản nếu phát hiện thao tác tự động.
 
 ADB trong LDPlayer phải bật: Cài đặt giả lập → mục Khác → **Gỡ lỗi ADB**. Nếu quên, bấm **Chụp thử** trong tool. Tool có thể tắt rồi mở lại giả lập một lần. Sau đó vào lại game và mở lại tab Add New.

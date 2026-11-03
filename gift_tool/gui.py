@@ -266,7 +266,7 @@ class App:
         ttk.Label(titles, text="Nhận quà MVP", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             titles,
-            text="Mở tab Add New, màn hình dọc. Lần đầu chỉ chạy 1–2 UID.",
+            text="Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID.",
             style="Hint.TLabel",
             wraplength=HINT_WRAP,
         ).pack(anchor="w", pady=(2, 0))
@@ -510,7 +510,7 @@ class App:
             shot = adb.screenshot()
             hits = []
             lines = [f"Kiểm tra trên {serial}, {shot.shape[1]}x{shot.shape[0]}"]
-            for name in ("search", "add", "visit", "gift", "select", "ok", "close", "missing_id"):
+            for name in ("search", "add", "visit", "gift", "select", "ok", "close", "missing_id", "friends", "community"):
                 hit = self.finder.locate(shot, name)
                 threshold = self.finder.templates[name][1]["threshold"]
                 mark = "thấy" if hit.score >= threshold and hit.w else "không"

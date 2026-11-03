@@ -11,8 +11,10 @@ from gift_tool.adb_client import AdbClient
 from gift_tool.paths import LOGS
 from gift_tool.vision import (
     Finder,
+    add_new_tab_point,
     avatar_point,
     field_point,
+    imwrite,
     player_level,
     result_signature,
     scene_signature,
@@ -46,6 +48,10 @@ AFTER_VISIT = (0.6, 0.9)
 SEARCH_TIMEOUT = 5.0
 SEARCH_GIVE_UP = 1.2
 RESULT_STABLE = 0.25
+# Cấp đọc rỗng (nhãn chưa vẽ xong, hoặc rớt chữ số) thì chụp lại vài lần trước khi bỏ cuộc.
+LEVEL_READS = 4
+LEVEL_RETRY_PAUSE = (0.25, 0.4)
+LEVEL_FAIL_FILE = "khong-doc-duoc-cap.png"
 VISIT_TIMEOUT = 3.0
 HOUSE_ENTER_TIMEOUT = 4.0
 HOUSE_CLOSE_SCORE = 0.80
@@ -56,6 +62,15 @@ GIFT_SCALES = (1.0, 1.05)
 UI_SCALES = (1.0,)
 SEARCH_MIN_X = 0.55
 BACK_TIMEOUT = 6.0
+# Tự tìm đường về ô nhập UID. Mỗi vòng chỉ làm một việc rồi chụp lại.
+NAV_TIMEOUT = 30.0
+NAV_MAX_ACTIONS = 8
+NAV_OPEN_PAUSE = (0.8, 1.1)
+NAV_TAB_PAUSE = (0.5, 0.7)
+# Bấm X lần hai khi màn cũ chưa kịp đổi sẽ rơi trúng nút Goldrush giữa đáy sân.
+NAV_CLOSE_SETTLE = 4.0
+NAV_AFTER_CLOSE = (0.6, 0.9)
+LOST_SCREEN_FILE = "khong-nhan-ra-man.png"
 
 
 class Stopped(Exception):
@@ -87,9 +102,12 @@ class Runner:
                 self.log("Emulator đang ngang. Hãy xoay dọc, giống ảnh mẫu, rồi chạy lại.")
                 return counts
             self._step("Kiểm tra ô nhập UID")
-            if not self._search_ready(shot):
-                self._step("Chưa thấy ô nhập UID", headline=True)
-                self.log("Chưa thấy ô nhập UID. Hãy mở tab Add New trong game rồi bấm Bắt đầu.")
+            if not self._open_uid_field(shot):
+                self._step("Không tìm được đường tới ô nhập UID", headline=True)
+                self.log(
+                    "Không tự mở được ô nhập UID. Hãy mở tab Add New trong game rồi bấm Bắt đầu. "
+                    f"Ảnh màn hình lúc đó: {LOGS / LOST_SCREEN_FILE}"
+                )
                 return counts
             for index, uid in enumerate(ids, start=1):
                 self._check()
@@ -114,7 +132,10 @@ class Runner:
                 handle.flush()
                 self._log_note(f"{LABELS[status]} ({seconds:.1f}s). {note}")
                 if not ready:
-                    self.log("Không thấy lại ô nhập UID. Dừng để khỏi bấm nhầm. Mở lại tab Add New rồi chạy tiếp các ID còn lại.")
+                    self._step("Mất ô nhập UID, tự mở lại")
+                    ready = self._open_uid_field()
+                if not ready:
+                    self.log("Không tự mở lại được ô nhập UID. Dừng để khỏi bấm nhầm. Mở lại tab Add New rồi chạy tiếp các ID còn lại.")
                     break
                 self._pause(*BETWEEN_IDS)
         self._summary(counts)
@@ -124,6 +145,11 @@ class Runner:
         self._step("Tìm ô nhập UID")
         shot = self._shot()
         search = self._uid_search(shot)
+        if search is None:
+            # Đang ở sân, Goldrush hoặc panel hồ sơ sai tab thì tự mò về, không báo lỗi ngay.
+            if self._open_uid_field(shot):
+                shot = self._shot()
+                search = self._uid_search(shot)
         if search is None:
             self._step("Không thấy ô nhập UID", headline=True)
             return "loi_timeout", "không thấy ô tìm UID", False
@@ -145,7 +171,7 @@ class Runner:
             self._step("Không thấy người chơi", headline=True)
             return "id_sai", "không thấy người chơi", self._uid_search(shot, UI_SCALES) is not None
 
-        level = player_level(shot, found)
+        shot, found, level = self._read_level(shot, found)
         if level is not None and level < MIN_LEVEL:
             self._step(f"Cấp {level}, dưới {MIN_LEVEL}", headline=True)
             ready = self._uid_search(shot, UI_SCALES) is not None
@@ -174,6 +200,24 @@ class Runner:
         if outcome == "no_gift":
             return "khong_co_qua", "vào nhà, không thấy hộp quà", ready
         return "loi_timeout", "không vào được nhà", ready
+
+    def _read_level(self, shot, found):
+        """Trả (ảnh, nút Add, cấp). Cấp rỗng sau vài lần chụp thì lưu ảnh để soi lại."""
+        for attempt in range(LEVEL_READS):
+            level = player_level(shot, found)
+            if level is not None:
+                return shot, found, level
+            if attempt == LEVEL_READS - 1:
+                break
+            self._step("Chưa đọc được cấp, chụp lại")
+            self._pause(*LEVEL_RETRY_PAUSE)
+            again = self._shot()
+            add = self._result_add(again, UI_SCALES)
+            if add is None:
+                break
+            shot, found = again, add
+        imwrite(LOGS / LEVEL_FAIL_FILE, shot)
+        return shot, found, None
 
     def _tap_close(self, shot) -> None:
         close = self.finder.find(shot, "close")
@@ -377,8 +421,8 @@ class Runner:
             self._check()
             shot = self._shot()
             if self._on_yard(shot):
+                # Không bấm thêm ở đây. Vòng ngoài sẽ mở lại panel Bạn bè bằng _open_uid_field.
                 self._step("Đang ở sân, không bấm Goldrush", headline=True)
-                self.log("Đang ở màn sân. Không bấm thêm kẻo vào Goldrush. Mở lại tab Add New rồi chạy tiếp.")
                 return False
             if self._search_ready(shot, UI_SCALES):
                 self._step("Đã về ô nhập UID")
@@ -413,6 +457,77 @@ class Runner:
         else:
             self._step("Chưa thấy lại ô nhập UID", headline=True)
         return ready
+
+    def _open_uid_field(self, shot=None) -> bool:
+        """Từ màn quen nào cũng mò về tab Add New: Goldrush, sân chính, panel hồ sơ sai tab, popup còn sót."""
+        deadline = time.time() + NAV_TIMEOUT
+        actions = 0
+        scales = None
+        while time.time() < deadline and actions < NAV_MAX_ACTIONS:
+            self._check()
+            if shot is None:
+                shot = self._shot()
+            if self._search_ready(shot, scales):
+                return True
+            scales = UI_SCALES
+            if self._nav_step(shot):
+                actions += 1
+            else:
+                self._pause(*POLL_PAUSE)
+            shot = None
+        shot = self._shot()
+        if self._search_ready(shot, UI_SCALES):
+            return True
+        imwrite(LOGS / LOST_SCREEN_FILE, shot)
+        return False
+
+    def _nav_step(self, shot) -> bool:
+        """Một việc cho màn hiện tại. False nghĩa là chưa nhận ra màn, chờ rồi chụp lại."""
+        visit = self.finder.find(shot, "visit", scales=UI_SCALES)
+        if visit is not None:
+            self._step("Còn popup Visit, đóng lại")
+            self._dismiss_visit_popup(shot)
+            self._pause(*NAV_TAB_PAUSE)
+            return True
+        for name in ("select", "ok"):
+            hit = self.finder.find(shot, name, scales=UI_SCALES)
+            if hit is not None:
+                self._step(f"Còn nút {BUTTON_NAMES[name]}, bấm để dọn")
+                self.adb.tap(hit.x, hit.y)
+                self._pause(*NAV_TAB_PAUSE)
+                return True
+
+        community = self.finder.find(shot, "community", scales=UI_SCALES)
+        if community is not None:
+            self._step("Đang ở panel hồ sơ, chuyển sang tab Add New")
+            self.adb.tap(*add_new_tab_point(shot, community))
+            self._pause(*NAV_TAB_PAUSE)
+            return True
+
+        friends = self.finder.find(shot, "friends", scales=UI_SCALES)
+        if friends is not None:
+            self._step("Đang ở màn chính, mở panel Bạn bè")
+            self.adb.tap(friends.x, friends.y)
+            self._pause(*NAV_OPEN_PAUSE)
+            return True
+
+        close = self.finder.locate(shot, "close", scales=UI_SCALES)
+        if close.w > 0 and close.score >= HOUSE_CLOSE_SCORE:
+            self._step("Đang ở Goldrush hoặc trong nhà, bấm X để ra màn chính")
+            self.adb.tap(close.x, close.y)
+            self._wait_close_gone()
+            return True
+        return False
+
+    def _wait_close_gone(self) -> None:
+        """Chờ nút X biến mất hẳn rồi mới cho bấm tiếp."""
+        deadline = time.time() + NAV_CLOSE_SETTLE
+        while time.time() < deadline:
+            self._pause(*POLL_PAUSE)
+            close = self.finder.locate(self._shot(), "close", scales=UI_SCALES)
+            if close.w == 0 or close.score < HOUSE_CLOSE_SCORE:
+                break
+        self._pause(*NAV_AFTER_CLOSE)
 
     def _uid_search(self, shot, scales=None):
         """Kính lúp ô UID nằm bên phải. Kính lúp Goldrush nằm bên trái."""

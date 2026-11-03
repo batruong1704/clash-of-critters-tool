@@ -25,15 +25,29 @@ SPECS = {
     "ok": {"threshold": 0.75, "screen_w": 584, "color": False},
     "missing_id": {"threshold": 0.70, "screen_w": 553, "color": False, "text": True},
     "goldrush": {"threshold": 0.78, "screen_w": 560, "color": True},
+    "friends": {"threshold": 0.80, "screen_w": 560, "color": True},
+    "community": {"threshold": 0.80, "screen_w": 559, "color": True},
 }
 
 SCALES = (0.86, 0.95, 1.0, 1.05, 1.14)
 WORK_WIDTH = 640
+# Tab Add New nằm dưới nút Community, lệch trái. Đo trên ảnh 559x1004.
+ADD_NEW_TAB_X = 0.18
+ADD_NEW_TAB_BELOW_COMMUNITY = 0.093
 BADGE_DARK = 60
 BADGE_MIN_W = 36
+# Độ rộng viên Lvl tính theo bề rộng nút Add: nền cộng thêm một khoảng cho mỗi chữ số.
+# Đo trên 720x1280: 1 chữ 89-93px, 2 chữ 103-107px, 3 chữ 117px, nút Add rộng 146px.
+BADGE_BASE_RATIO = 0.51
+BADGE_DIGIT_RATIO = 0.096
+# Chữ 1 hẹp hơn chữ khác, nên làm tròn nghiêng về ít chữ hơn để khỏi bắt lỗi oan.
+BADGE_ROUND_BIAS = 0.35
 DIGIT_SCORE = 0.64
 DIGIT_MARGIN = 0.08
 DIGIT_BOX = (16, 22)
+# Tâm chữ "l" khoảng 2.8–3.0 lần chiều cao nét; tâm chữ số đầu khoảng 3.7–3.9.
+# Cắt theo bề rộng viên thì viên 1–2 chữ số ngắn lại, chữ l lọt vào phần số và cả cấp thành rỗng.
+LVL_GLYPH_CUT = 3.25
 # Arial Bold đọc hụt chữ 1. Cấp dưới 150 gần như luôn có chữ 1, cả số thành rỗng và tool vẫn bấm Visit.
 FONT_FILES = ("malgunbd.ttf", "arialbd.ttf")
 FONT_PX = 28
@@ -149,6 +163,12 @@ def field_point(screen, search: Hit) -> tuple[int, int]:
     return max(10, x), int(search.y)
 
 
+def add_new_tab_point(screen, community: Hit) -> tuple[int, int]:
+    """Tab Add New. Tab đang chọn và tab chưa chọn khác màu, nên không so mẫu mà tính từ nút Community."""
+    height, width = screen.shape[:2]
+    return int(ADD_NEW_TAB_X * width), int(community.y + ADD_NEW_TAB_BELOW_COMMUNITY * height)
+
+
 def avatar_point(screen, add: Hit) -> tuple[int, int]:
     """Avatar hàng kết quả, nằm bên trái nút Add."""
     width = screen.shape[1]
@@ -207,7 +227,15 @@ def player_level(screen, add: Hit) -> int | None:
         digits.append(digit)
     if len(digits) > 4:
         return None
+    # Viên rộng hơn số chữ đọc được nghĩa là rớt chữ. Trả rỗng để chụp lại, đừng ghi cấp thấp oan.
+    if _expected_digits(badge.shape[1], add.w) > len(digits):
+        return None
     return int("".join(digits))
+
+
+def _expected_digits(badge_width: int, add_width: int) -> int:
+    ratio = badge_width / max(1, add_width)
+    return int((ratio - BADGE_BASE_RATIO) / BADGE_DIGIT_RATIO + BADGE_ROUND_BIAS)
 
 
 def _level_badge(screen, add: Hit):
@@ -240,7 +268,7 @@ def _level_badge(screen, add: Hit):
 
 
 def _badge_digits(badge):
-    """Chữ số nằm nửa phải nhãn. Nửa trái là chữ Lvl."""
+    """Chữ số nằm sau chữ Lvl. Mốc cắt theo chiều cao nét, không theo bề rộng viên."""
     white = (badge > 170).astype(np.uint8) * 255
     white[:2, :] = 0
     white[-2:, :] = 0
@@ -257,10 +285,10 @@ def _badge_digits(badge):
         return []
     tallest = max(item[3] for item in glyphs)
     glyphs = [item for item in glyphs if item[3] >= tallest * 0.55]
-    width = badge.shape[1]
+    cut = tallest * LVL_GLYPH_CUT
     digits = []
     for x, y, w, h in sorted(glyphs):
-        if x + w / 2 <= width * 0.46:
+        if x + w / 2 <= cut:
             continue
         digits.append(white[y : y + h, x : x + w])
     return digits

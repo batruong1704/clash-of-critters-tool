@@ -5,8 +5,13 @@ from pathlib import Path
 import cv2
 
 from gift_tool.paths import RESOURCE, ROOT
+import numpy as np
+
 from gift_tool.vision import (
     Finder,
+    _badge_digits,
+    _level_badge,
+    _read_digit,
     avatar_point,
     draw_hits,
     field_point,
@@ -18,6 +23,40 @@ from gift_tool.vision import (
 )
 
 NAMES = ("search", "add", "visit", "gift", "select", "ok", "close")
+
+
+def _shrink_badge(badge, drop_right: int):
+    """Bỏ chữ số bên phải và thu viên lại, giống nhãn ít chữ số hơn."""
+    white = (badge > 170).astype(np.uint8) * 255
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(white, 8)
+    boxes = []
+    for index in range(1, count):
+        x, y, w, h, area = [int(value) for value in stats[index]]
+        if h < 8 or area < 8:
+            continue
+        boxes.append((x, y, w, h, index))
+    boxes.sort()
+    if len(boxes) <= drop_right:
+        raise RuntimeError("không đủ nét để thu viên")
+    kept_last = boxes[-(drop_right + 1)]
+    out = badge.copy()
+    for _, _, _, _, index in boxes[-drop_right:]:
+        out[labels == index] = 0
+    right_pad = badge.shape[1] - (boxes[-1][0] + boxes[-1][2])
+    new_w = kept_last[0] + kept_last[2] + max(1, right_pad)
+    return out[:, :new_w]
+
+
+def _read_badge(badge) -> int | None:
+    digits = []
+    for glyph in _badge_digits(badge):
+        digit = _read_digit(glyph)
+        if digit is None:
+            return None
+        digits.append(digit)
+    if not digits:
+        return None
+    return int("".join(digits))
 
 
 def screenshots() -> list[Path]:
@@ -62,6 +101,12 @@ def main():
     print(f"cấp hàng kết quả = {level}")
     if level != 299:
         raise SystemExit("Ảnh 3 phải đọc cấp 299 trên hàng Results")
+    badge = _level_badge(img3, add)
+    level_two = _read_badge(_shrink_badge(badge, 1))
+    level_one = _read_badge(_shrink_badge(badge, 2))
+    print(f"cấp khi còn 2 chữ số = {level_two}, 1 chữ số = {level_one}")
+    if level_two != 29 or level_one != 2:
+        raise SystemExit("Viên Lvl một hoặc hai chữ số phải đọc được cấp, không được thành rỗng")
 
     img2 = by_prefix["2"][0]
     search2 = finder.find(img2, "search")
@@ -81,6 +126,22 @@ def main():
         raise SystemExit("Ảnh thông báo ID sai phải được nhận")
     if finder.find(img2, "missing_id") is not None:
         raise SystemExit("Màn nhập UID không được nhận nhầm là ID sai")
+
+    # Hai mẫu dùng để tự mò về ô nhập UID. Mỗi mẫu chỉ được nhận ở đúng màn của nó.
+    yard = imread(next(RESOURCE.glob("0. màn hình ở sản.png")))
+    goldrush = imread(next(RESOURCE.glob("0. màn hình chế độ goldrush.png")))
+    if finder.find(yard, "friends") is None:
+        raise SystemExit("Ảnh sân phải thấy icon Bạn bè")
+    for label, shot in (("goldrush", goldrush), ("nhập UID", img2), ("kết quả", img3)):
+        if finder.find(shot, "friends") is not None:
+            raise SystemExit(f"Màn {label} không được nhận nhầm là màn chính")
+    if finder.find(img2, "community") is None:
+        raise SystemExit("Panel hồ sơ phải thấy nút Community")
+    for label, shot in (("sân", yard), ("goldrush", goldrush)):
+        if finder.find(shot, "community") is not None:
+            raise SystemExit(f"Màn {label} không được nhận nhầm là panel hồ sơ")
+    if finder.find(goldrush, "close") is None:
+        raise SystemExit("Màn goldrush phải thấy nút X")
 
     gift5 = finder.find(by_prefix["5"][0], "gift")
     gift9 = finder.find(by_prefix["9"][0], "gift")
