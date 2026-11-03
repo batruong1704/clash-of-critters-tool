@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "templates"
+OUT = ROOT.parent / "templates"
 
 # (tên file screenshot bắt đầu bằng, y0, y1, x0, x1, tên mẫu)
 CROPS = [
@@ -30,6 +30,12 @@ def imread(path: Path):
 
 
 def main():
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    from gift_tool.paths import note_use
+
+    note_use("build_templates cắt mẫu từ resource/")
     OUT.mkdir(exist_ok=True)
     shots = list((ROOT / "resource").glob("*.png"))
     for prefix, y0, y1, x0, x1, name in CROPS:

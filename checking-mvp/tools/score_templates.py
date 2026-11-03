@@ -1,12 +1,13 @@
 """In điểm khớp ảnh mẫu trên các ảnh có sẵn. Chạy: py -3 tools/score_templates.py"""
 
-from gift_tool.paths import RESOURCE, ROOT
+from gift_tool.paths import RESOURCE, ROOT, note_use
 from gift_tool.vision import Finder, avatar_point, field_point, imread
 
 NAMES = ("search", "add", "visit", "gift", "close", "select", "ok")
 
 
 def main():
+    note_use("score_templates chấm điểm resource/")
     finder = Finder()
     print("templates")
     for name, (img, spec) in finder.templates.items():

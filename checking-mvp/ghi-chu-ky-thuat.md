@@ -15,7 +15,7 @@ ADB phải bật trong LDPlayer (Cài đặt → Khác → Gỡ lỗi ADB). Tron
 
 ## Nhận nút trên ảnh
 
-Không có DOM. Mỗi nút là một file PNG trong `templates/`. OpenCV so mẫu (`TM_CCOEFF_NORMED`), điểm từ 0 đến 1. Ảnh chụp được thu về bề rộng tối đa 640px rồi mới so, tọa độ bấm được nhân lại ra ảnh gốc.
+Không có DOM. Mỗi nút là một file PNG trong `templates/` ở thư mục cha của repo, dùng chung cho các tool. OpenCV so mẫu (`TM_CCOEFF_NORMED`), điểm từ 0 đến 1. Ảnh chụp được thu về bề rộng tối đa 640px rồi mới so, tọa độ bấm được nhân lại ra ảnh gốc.
 
 `screen_w` trong `gift_tool/vision.py` là bề rộng ảnh lúc cắt mẫu. Cùng tỉ lệ 9:16 thì đổi độ phân giải không cần cắt lại. Ảnh chụp có viền đen, hoặc khung không còn 9:16, thì tool cắt viền và thử thêm tỉ lệ cao trước khi kết luận không thấy người chơi.
 
@@ -142,7 +142,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `gift_tool/adb_client.py` | Chụp và bấm |
 | `gift_tool/paths.py` | Đường dẫn thư mục |
 | `gift_tool/self_test.py` | Kiểm tra mẫu ảnh trên ảnh có sẵn |
-| `templates/` | Ảnh mẫu nút |
+| `../templates/` | Ảnh mẫu nút, dùng chung. Tool nhận quà lấy qua `TEMPLATES` trong `paths.py` |
 | `resource/` | Ảnh chụp từng bước của game, dùng để cắt mẫu và chạy `self_test` |
 | `tools/build_templates.py` | Cắt mẫu từ `resource/` |
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |

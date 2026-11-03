@@ -4,7 +4,7 @@ from pathlib import Path
 
 import cv2
 
-from gift_tool.paths import RESOURCE, ROOT
+from gift_tool.paths import RESOURCE, ROOT, note_use
 import numpy as np
 
 from gift_tool.vision import (
@@ -64,6 +64,7 @@ def screenshots() -> list[Path]:
 
 
 def main():
+    note_use("self_test đọc resource/")
     finder = Finder()
     shots = {path.name: imread(path) for path in screenshots()}
     print(f"{'file':<18} " + " ".join(f"{name:>7}" for name in NAMES))
