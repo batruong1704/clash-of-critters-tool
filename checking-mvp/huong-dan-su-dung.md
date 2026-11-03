@@ -12,7 +12,7 @@ ADB trong LDPlayer phải bật: Cài đặt giả lập → mục Khác → **G
 
 ## Mở tool
 
-Double-click `run.bat` trong thư mục này. Lần đầu trên máy mới, file này tự tạo `.venv` ngay trong thư mục tool và cài thư viện trong `requirements.txt`. Copy sang máy khác thì mở lại `run.bat`, không cần đường dẫn của máy cũ.
+Double-click `run.bat` ở thư mục gốc của project (cùng cấp với thư mục này). File đó mở cửa sổ chung cho mọi chức năng. Lần đầu trên máy mới, file này tự tạo `.venv` ngay trong thư mục tool và cài thư viện trong `requirements.txt`. Copy sang máy khác thì mở lại `run.bat`, không cần đường dẫn của máy cũ.
 
 Muốn chạy tay trong terminal tại thư mục tool:
 

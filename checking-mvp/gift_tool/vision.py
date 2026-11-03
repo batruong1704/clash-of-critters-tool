@@ -117,6 +117,10 @@ class Finder:
             return None
         return hit
 
+    def add_template(self, name: str, image, spec: dict) -> None:
+        """Thêm mẫu ngoài bộ nhận quà. Rally dùng icon chat và nút back."""
+        self.templates[name] = (image, spec)
+
     def find_below(self, screen, name: str, y0: int, y1: int, scales=None) -> Hit | None:
         """Tìm nút trong một dải ngang của ảnh, rồi trả tọa độ trên ảnh gốc."""
         height = screen.shape[0]

@@ -227,6 +227,23 @@ class AdbClient:
     def tap(self, x: int, y: int) -> None:
         self._run([self.adb, "-s", self.serial, "shell", "input", "tap", str(int(x)), str(int(y))])
 
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 350) -> None:
+        self._run(
+            [
+                self.adb,
+                "-s",
+                self.serial,
+                "shell",
+                "input",
+                "swipe",
+                str(int(x1)),
+                str(int(y1)),
+                str(int(x2)),
+                str(int(y2)),
+                str(int(duration_ms)),
+            ]
+        )
+
     def input_text(self, text: str) -> None:
         if not text.isdigit():
             raise ValueError("UID chỉ gồm chữ số.")

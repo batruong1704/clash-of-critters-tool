@@ -11,6 +11,7 @@ from gift_tool.adb_client import AdbClient
 from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS, Runner
 from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
+from rally_tool.flow import Runner as RallyRunner
 
 WINDOW_WIDTH = 840
 COMPACT_HEIGHT = 760
@@ -43,7 +44,9 @@ LOG_OK = "#0e7a3d"
 LOG_WARN = "#8a5a00"
 LOG_BAD = "#b42318"
 LOG_FONT = ("Consolas", 10)
-OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng")
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào")
+GIFT_HINT = "Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID."
+RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
 BAD_MARKS = (
     "lỗi",
     "timeout",
@@ -282,7 +285,8 @@ class App:
         self.worker: threading.Thread | None = None
         self.finder = Finder()
         self.detail_open = False
-        self.scanning = False
+        self.mode = "list"
+        self.running = False
 
         self.body = ttk.Frame(root, padding=20)
         self.body.pack(fill="both", expand=True)
@@ -296,10 +300,12 @@ class App:
         header.pack(fill="x")
         titles = ttk.Frame(header)
         titles.pack(side="left", fill="x", expand=True)
-        ttk.Label(titles, text="Nhận quà MVP", style="Title.TLabel").pack(anchor="w")
+        self.title_var = tk.StringVar(value="Nhận quà MVP")
+        self.hint_var = tk.StringVar(value=GIFT_HINT)
+        ttk.Label(titles, textvariable=self.title_var, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             titles,
-            text="Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID.",
+            textvariable=self.hint_var,
             style="Hint.TLabel",
             wraplength=HINT_WRAP,
         ).pack(anchor="w", pady=(2, 0))
@@ -315,13 +321,19 @@ class App:
         self.list_seg.pack(side="left")
         self.scan_seg = ttk.Button(switch, text="Quét ID", style="Segment.TButton", command=self.show_scan)
         self.scan_seg.pack(side="left", padx=(4, 0))
+        self.rally_seg = ttk.Button(
+            switch, text="Auto join rally", style="Segment.TButton", command=self.show_rally
+        )
+        self.rally_seg.pack(side="left", padx=(4, 0))
 
         card_shell, self.card = bordered(frame)
         card_shell.pack(fill="x", pady=(8, 0))
         list_tab = ttk.Frame(self.card, style="Card.TFrame")
         scan_tab = ttk.Frame(self.card, style="Card.TFrame")
+        rally_tab = ttk.Frame(self.card, style="Card.TFrame")
         self.list_page = list_tab
         self.scan_page = scan_tab
+        self.rally_page = rally_tab
 
         ttk.Label(list_tab, text="Mỗi dòng một UID", style="Card.TLabel").pack(anchor="w")
         self.ids = tk.Text(
@@ -357,9 +369,24 @@ class App:
             text="ID đầu là lượt 1. Mỗi lần sau cộng thêm 1.",
             style="CardHint.TLabel",
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        ttk.Label(rally_tab, text="Trong Goldrush, mở chat Frostnip League.", style="Card.TLabel").pack(anchor="w")
+        ttk.Label(
+            rally_tab,
+            text="Thấy nút Join xanh trong chat thì bấm ngay. Không thấy thì mới kéo khoảng 10 tin gần nhất. Nhiều người cùng một ô thì bấm hết, rồi kéo xuống nếu danh sách còn dài.",
+            style="CardHint.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", pady=(8, 0))
+        ttk.Label(
+            rally_tab,
+            text="Không thấy nút xanh thì kéo tới khi chạm tin mới nhất, rồi mới chờ đợt sau. Hộp hoàn thành rally thì bấm Confirm để đóng. Chạy đến khi bấm Dừng.",
+            style="CardHint.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", pady=(8, 0))
+
         list_tab.pack(fill="x")
         self.root.update_idletasks()
-        page_height = max(list_tab.winfo_reqheight(), scan_tab.winfo_reqheight())
+        page_height = max(page.winfo_reqheight() for page in (list_tab, scan_tab, rally_tab))
         self.card.pack_propagate(False)
         self.card.configure(height=page_height + 28)
 
@@ -419,26 +446,57 @@ class App:
         self._begin(ids)
 
     def run_current(self):
-        if self.scanning:
+        if self.mode == "rally":
+            self.start_rally()
+        elif self.mode == "scan":
             self.start_scan()
-            return
-        self.start()
+        else:
+            self.start()
 
     def show_list(self):
-        self.scanning = False
-        self.scan_page.pack_forget()
-        self.list_page.pack(fill="x")
-        self.list_seg.configure(style="SegmentOn.TButton")
-        self.scan_seg.configure(style="Segment.TButton")
-        self.primary_btn.configure(text="Bắt đầu")
+        self._select("list")
 
     def show_scan(self):
-        self.scanning = True
+        self._select("scan")
+
+    def show_rally(self):
+        self._select("rally")
+
+    def _select(self, mode: str):
+        if self.running:
+            return
+        self.mode = mode
         self.list_page.pack_forget()
-        self.scan_page.pack(fill="x")
+        self.scan_page.pack_forget()
+        self.rally_page.pack_forget()
         self.list_seg.configure(style="Segment.TButton")
-        self.scan_seg.configure(style="SegmentOn.TButton")
-        self.primary_btn.configure(text="Quét")
+        self.scan_seg.configure(style="Segment.TButton")
+        self.rally_seg.configure(style="Segment.TButton")
+        if mode == "scan":
+            self.scan_page.pack(fill="x")
+            self.scan_seg.configure(style="SegmentOn.TButton")
+            self.primary_btn.configure(text="Quét")
+            self.title_var.set("Nhận quà MVP")
+            self.hint_var.set(GIFT_HINT)
+            self.root.title("Nhận quà MVP")
+            self.progress.set(f"Sẵn sàng · dừng sau {MAX_GIFTS} quà")
+            return
+        if mode == "rally":
+            self.rally_page.pack(fill="both", expand=True)
+            self.rally_seg.configure(style="SegmentOn.TButton")
+            self.primary_btn.configure(text="Bắt đầu")
+            self.title_var.set("Auto join rally")
+            self.hint_var.set(RALLY_HINT)
+            self.root.title("Auto join rally")
+            self.progress.set("Sẵn sàng · join rally đến khi dừng")
+            return
+        self.list_page.pack(fill="x")
+        self.list_seg.configure(style="SegmentOn.TButton")
+        self.primary_btn.configure(text="Bắt đầu")
+        self.title_var.set("Nhận quà MVP")
+        self.hint_var.set(GIFT_HINT)
+        self.root.title("Nhận quà MVP")
+        self.progress.set(f"Sẵn sàng · dừng sau {MAX_GIFTS} quà")
 
     def start_scan(self):
         if self.worker and self.worker.is_alive():
@@ -462,14 +520,37 @@ class App:
         self.write(f"Quét nối tiếp {len(ids)} ID, từ {ids[0]} đến {ids[-1]}.")
         self._begin(ids)
 
+    def start_rally(self):
+        if self.worker and self.worker.is_alive():
+            return
+        self.stop.clear()
+        self._clear(self.detail_box)
+        self._lock()
+        self.progress.set("Đang join rally")
+        self.worker = threading.Thread(target=self._run_rally, daemon=True)
+        self.worker.start()
+
     def _begin(self, ids: list[str]):
         self.stop.clear()
         self._clear(self.detail_box)
-        self.primary_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
+        self._lock()
         self.progress.set(f"Đang chạy 0/{MAX_GIFTS} quà")
         self.worker = threading.Thread(target=self._run, args=(ids,), daemon=True)
         self.worker.start()
+
+    def _lock(self):
+        self.running = True
+        self.primary_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        for button in (self.list_seg, self.scan_seg, self.rally_seg):
+            button.configure(state="disabled")
+
+    def _unlock(self):
+        self.running = False
+        self.primary_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
+        for button in (self.list_seg, self.scan_seg, self.rally_seg):
+            button.configure(state="normal")
 
     def toggle_detail(self):
         height = self.root.winfo_height()
@@ -522,8 +603,28 @@ class App:
             self.write(f"Lỗi: {exc}")
             self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
         finally:
-            self.root.after(0, lambda: self.primary_btn.configure(state="normal"))
-            self.root.after(0, lambda: self.stop_btn.configure(state="disabled"))
+            self.root.after(0, self._unlock)
+
+    def _run_rally(self):
+        try:
+            adb = AdbClient()
+            serial = adb.ensure_device()
+            self.write(f"Đã nối {serial}")
+            self.root.after(0, lambda s=serial: self._set_device(s))
+
+            def log(message: str):
+                self.write(message)
+                if "xin vào" in message.lower() or message.startswith("Đã dừng"):
+                    self.root.after(0, lambda m=message: self.progress.set(m))
+
+            counts = RallyRunner(adb, log, self.stop, self.finder).run()
+            summary = f"Xong. Đã xin {counts['xin']} rally."
+            self.root.after(0, lambda text=summary: self.progress.set(text))
+        except Exception as exc:
+            self.write(f"Lỗi: {exc}")
+            self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
+        finally:
+            self.root.after(0, self._unlock)
 
     def _capture_only(self):
         try:
