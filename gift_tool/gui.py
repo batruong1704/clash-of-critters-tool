@@ -13,7 +13,7 @@ from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
 
 WINDOW_WIDTH = 840
-COMPACT_HEIGHT = 720
+COMPACT_HEIGHT = 760
 DETAIL_PANEL = 420
 OPEN_WIDTH = WINDOW_WIDTH + DETAIL_PANEL
 OVERVIEW_LOG_LINES = 10
@@ -142,7 +142,10 @@ def apply_theme(root: tk.Tk) -> None:
         "Segment.TButton",
         background=APP_BG,
         foreground=LOG_MUTED,
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         focusthickness=0,
         focuscolor=APP_BG,
         padding=(14, 8),
@@ -153,7 +156,10 @@ def apply_theme(root: tk.Tk) -> None:
         "SegmentOn.TButton",
         background=CARD_BG,
         foreground=LOG_FG,
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         focusthickness=0,
         focuscolor=CARD_BG,
         padding=(14, 8),
@@ -183,7 +189,10 @@ def apply_theme(root: tk.Tk) -> None:
         "Primary.TButton",
         background=ACCENT,
         foreground="#ffffff",
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=ACCENT_PRESS,
+        lightcolor=ACCENT_PRESS,
+        darkcolor=ACCENT_PRESS,
         focusthickness=0,
         focuscolor=ACCENT,
         padding=(18, 8),
@@ -202,7 +211,10 @@ def apply_theme(root: tk.Tk) -> None:
         "Stop.TButton",
         background=APP_BG,
         foreground=LOG_MUTED,
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         focusthickness=0,
         focuscolor=APP_BG,
         padding=(14, 8),
@@ -217,7 +229,10 @@ def apply_theme(root: tk.Tk) -> None:
         "Ghost.TButton",
         background=APP_BG,
         foreground=LOG_FG,
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         focusthickness=0,
         focuscolor=APP_BG,
         padding=(10, 8),
@@ -228,13 +243,31 @@ def apply_theme(root: tk.Tk) -> None:
         "CardGhost.TButton",
         background=CARD_BG,
         foreground=LOG_FG,
-        borderwidth=0,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         focusthickness=0,
         focuscolor=CARD_BG,
         padding=(10, 6),
         font=UI_FONT,
     )
     style.map("CardGhost.TButton", background=[("active", "#f3f4f6"), ("pressed", "#e5e7eb")])
+
+
+def bordered(parent: tk.Misc) -> tuple[tk.Frame, ttk.Frame]:
+    """Viền 1 px. ttk.Frame không vẽ cạnh khi chỉ đổi màu nền."""
+    shell = tk.Frame(
+        parent,
+        bg=BORDER,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=BORDER,
+        bd=0,
+    )
+    inner = ttk.Frame(shell, style="Card.TFrame", padding=14)
+    inner.pack(fill="both", expand=True)
+    return shell, inner
 
 
 class App:
@@ -283,8 +316,8 @@ class App:
         self.scan_seg = ttk.Button(switch, text="Quét ID", style="Segment.TButton", command=self.show_scan)
         self.scan_seg.pack(side="left", padx=(4, 0))
 
-        self.card = ttk.Frame(frame, style="Card.TFrame", padding=14)
-        self.card.pack(fill="x", pady=(8, 0))
+        card_shell, self.card = bordered(frame)
+        card_shell.pack(fill="x", pady=(8, 0))
         list_tab = ttk.Frame(self.card, style="Card.TFrame")
         scan_tab = ttk.Frame(self.card, style="Card.TFrame")
         self.list_page = list_tab
@@ -346,17 +379,19 @@ class App:
         self.progress = tk.StringVar(value=f"Sẵn sàng · dừng sau {MAX_GIFTS} quà")
         ttk.Label(frame, textvariable=self.progress).pack(anchor="w", pady=(12, 0))
 
-        ttk.Label(frame, text="TỔNG QUAN", style="Section.TLabel").pack(anchor="w", pady=(14, 6))
+        log_shell, log_card = bordered(frame)
+        log_shell.pack(fill="x", pady=(14, 0))
+        ttk.Label(log_card, text="TỔNG QUAN", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
         self.log_box = tk.Text(
-            frame, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
+            log_card, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.log_box.pack(fill="x")
         self._paint_log(self.log_box)
 
-        self.detail_frame = ttk.Frame(self.body, style="Card.TFrame", padding=14)
-        ttk.Label(self.detail_frame, text="CHI TIẾT", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
+        self.detail_frame, detail_card = bordered(self.body)
+        ttk.Label(detail_card, text="CHI TIẾT", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
         self.detail_box = tk.Text(
-            self.detail_frame, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
+            detail_card, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.detail_box.pack(fill="both", expand=True)
         self._paint_log(self.detail_box)

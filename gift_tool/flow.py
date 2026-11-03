@@ -85,6 +85,7 @@ class Runner:
         self.detail = detail
         self.stop = stop
         self.max_gifts = max_gifts
+        self._clock = time.time()
 
     def run(self, ids: list[str]) -> dict[str, int]:
         counts = {key: 0 for key in LABELS}
@@ -118,6 +119,7 @@ class Runner:
                 self.log(f"[{index}/{len(ids)}] UID {uid} — đã nhận {counts['da_nhan_qua']}/{self.max_gifts}")
                 self._step(f"UID {uid} ({index}/{len(ids)})", headline=True)
                 started = time.time()
+                self._clock = started
                 try:
                     status, note, ready = self.process_one(uid)
                 except Stopped:
@@ -576,9 +578,13 @@ class Runner:
         # Kết luận sát lề. Bước làm thụt vào để khỏi lẫn với kết quả.
         if self.detail is None:
             return
-        if not headline:
-            message = f"{LOG_INDENT}{message}"
-        self.detail(message)
+        # Mốc giờ tính từ đầu UID, để thấy bước nào ngốn thời gian.
+        # Dấu ngoặc ở đầu dòng để GUI không nhầm dòng kết luận thành bước phụ (bước phụ bắt đầu bằng khoảng trắng).
+        stamp = f"[{time.time() - self._clock:5.1f}s]"
+        if headline:
+            self.detail(f"{stamp} {message}")
+        else:
+            self.detail(f"{LOG_INDENT}{stamp} {message}")
 
     def _log_note(self, message: str) -> None:
         self.log(f"{LOG_INDENT}{message}")

@@ -23,6 +23,11 @@ LDCONSOLE_CANDIDATES = [
 ]
 CONNECT_PORTS = (5555, 5557, 5554, 5556, 5558, 5559, 5561)
 
+# Mã phím Android. Về cuối dòng rồi xóa lùi. Ô UID dài tối đa 15 chữ số, cộng một nhịp dự phòng.
+KEY_MOVE_END = "123"
+KEY_DELETE = "67"
+CLEAR_COUNT = 16
+
 
 def _first_existing(paths: list[Path]) -> Path | None:
     for path in paths:
@@ -65,8 +70,11 @@ class AdbClient:
         if not self.serial:
             self.ensure_device()
         raw = self._run([self.adb, "-s", self.serial, "exec-out", "screencap", "-p"])
-        png = raw.replace(b"\r\n", b"\n")
-        img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        # exec-out của adb LDPlayer 9 giữ nguyên byte. Thay \r\n ở đây làm hỏng mọi ảnh vì dữ liệu nén
+        # có sẵn vài cặp 0D 0A, rồi mỗi lần chụp phải đi đường dự phòng chậm gấp đôi. Chỉ thay khi giải mã thẳng hỏng.
+        img = self._decode_png(raw)
+        if img is None:
+            img = self._decode_png(raw.replace(b"\r\n", b"\n"))
         if img is None:
             remote = "/sdcard/coc_gift_cap.png"
             self._run([self.adb, "-s", self.serial, "shell", "screencap", "-p", remote])
@@ -79,6 +87,12 @@ class AdbClient:
             raise RuntimeError("Không chụp được màn hình emulator.")
         return img
 
+    @staticmethod
+    def _decode_png(data: bytes):
+        if not data:
+            return None
+        return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+
     def tap(self, x: int, y: int) -> None:
         self._run([self.adb, "-s", self.serial, "shell", "input", "tap", str(int(x)), str(int(y))])
 
@@ -87,8 +101,8 @@ class AdbClient:
             raise ValueError("UID chỉ gồm chữ số.")
         self._run([self.adb, "-s", self.serial, "shell", "input", "text", text])
 
-    def clear_text(self, count: int = 16) -> None:
-        codes = ["123", *["67"] * count]
+    def clear_text(self, count: int = CLEAR_COUNT) -> None:
+        codes = [KEY_MOVE_END, *[KEY_DELETE] * count]
         self._run([self.adb, "-s", self.serial, "shell", "input", "keyevent", *codes])
 
     def back(self) -> None:

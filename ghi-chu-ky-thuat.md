@@ -9,7 +9,7 @@ Game chạy trong **LDPlayer 9**, màn hình **dọc 720×1280**. Tool không ch
 - `adb` của LDPlayer: `D:\LDPlayer\LDPlayer9\adb.exe`
 - Điều khiển giả lập: `D:\LDPlayer\LDPlayer9\ldconsole.exe`
 - Máy thường hiện là `emulator-5554`. Nếu chưa thấy, tool thử `ldconsole adb` rồi `adb connect 127.0.0.1:<cổng>`.
-- Chụp màn hình: `adb exec-out screencap -p`. Trên Windows phải đổi `\r\n` thành `\n` trước khi đọc PNG. Nếu lệnh đó hỏng, tool chụp ra `/sdcard/coc_gift_cap.png` rồi kéo về `logs/cap.png`.
+- Chụp màn hình: `adb exec-out screencap -p`, giải mã thẳng. **Đừng thay `\r\n` thành `\n`**: `exec-out` của adb LDPlayer 9 giữ nguyên byte, mà dữ liệu PNG nén luôn có vài cặp `0D 0A` ngẫu nhiên (4 đến 13 cặp mỗi ảnh). Thay vào là hỏng 8/8 ảnh, và mỗi lần chụp rơi xuống đường dự phòng bên dưới, chậm gấp đôi. Tool chỉ thử thay `\r\n` khi giải mã thẳng thất bại. Đường dự phòng: chụp ra `/sdcard/coc_gift_cap.png` rồi kéo về `logs/cap.png`.
 - Bấm: `adb shell input tap x y`. Gõ UID: `adb shell input text` (chỉ chữ số). Xóa ô cũ: phím `123` (về cuối dòng) rồi nhiều lần `67` (xóa).
 
 ADB phải bật trong LDPlayer (Cài đặt → Khác → Gỡ lỗi ADB). Trong file `vms/config/leidian0.config` khóa đó là `basicSettings.adbDebug`. Nếu đang tắt, nút **Chụp thử** có thể tắt giả lập, ghi `1` vào khóa này, rồi mở lại. Lúc đó phải vào lại game.
@@ -146,11 +146,40 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `templates/` | Ảnh mẫu nút |
 | `resource/` | Ảnh chụp từng bước của game, dùng để cắt mẫu và chạy `self_test` |
 | `tools/build_templates.py` | Cắt mẫu từ `resource/` |
+| `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |
 | `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
 | `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
 | `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow` |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
+
+## Tốc độ: thời gian đi đâu
+
+Đo bằng `py -3 tools/profile_flow.py <uid> ...` trên emulator thật (không chạy cùng lúc với lượt quét). Mỗi dòng log chi tiết có mốc giờ `[ 3.2s]` tính từ đầu UID.
+
+Trên 303 UID đã quét: UID **không có quà** (vào nhà, trung vị ~17s) chiếm **52%** tổng thời gian dù chỉ 29% số UID. ID sai ~6s, false ~5,6s.
+
+Chi phí từng việc, sau khi sửa lỗi chụp:
+
+| Việc | Mỗi lần | Ghi chú |
+|---|---|---|
+| Chụp màn hình | ~330 ms | Trước khi sửa lỗi `\r\n` là ~750 ms. Nén PNG không phải thủ phạm: chụp thô cũng ~330 ms |
+| `input tap` | ~220 ms (đo riêng), ~350 ms trong luồng | Mỗi lệnh `input` khởi động một tiến trình Java trên emulator |
+| `input keyevent` | ~250 ms cộng ~18 ms mỗi phím | Xóa 17 phím tốn ~600 ms |
+| `input text` | ~400 ms | |
+| So một mẫu | 18–80 ms ở một tỉ lệ, 78–380 ms ở 5 tỉ lệ | Chỉ **4–17%** thời gian một UID |
+| Một lệnh `adb shell echo` | ~77 ms | Chi phí spawn của adb |
+
+Thời gian một UID sau khi sửa lỗi chụp (trước → sau): ID sai 5,7s → 4,3s. False 4,7s → 4,4s. Vào nhà không có quà 14,3s → 12,9s.
+
+Vào nhà giảm ít vì phần lớn là **chờ game tải nhà** (khoảng 3,8s từ lúc bấm Visit tới lúc thấy nút X). Chụp nhanh hơn chỉ làm tool chụp nhiều lần hơn trong khoảng chờ đó (10 thành 14 ảnh).
+
+Đã thử và **không làm**:
+
+- **Cắt vùng quan tâm, so một tỉ lệ.** So ảnh chỉ 4–17% thời gian và phần lớn chạy lúc đang chờ game, nên tiết kiệm được vài chục mili-giây. Không đáng thêm độ phức tạp.
+- **Gộp xóa và gõ UID thành một lệnh `input keyevent` bằng phím số** (tiết kiệm ~380 ms mỗi UID, và hai UID đầu chạy đúng). Ngay sau đó game treo màn trắng rồi sập khi mở lại (`SIGSEGV` trong luồng `UnityGfxDeviceW` của `libunity.so`), phải khởi động lại LDPlayer mới chạy lại được. Chưa chứng minh lệnh này là nguyên nhân, nhưng thời điểm trùng khớp, nên đã gỡ. Quay lại cách `clear_text` rồi `input_text` đã chạy ổn trên hơn 300 UID. Muốn thử lại thì thử trên emulator vừa khởi động lại, từng bước, và theo dõi `adb logcat -b crash`.
+
+Còn có thể làm: bỏ qua các khoảng nghỉ ngẫu nhiên (`nghỉ cố định` chiếm 22–27%, chủ ý để giống người, rút ngắn là đánh đổi với rủi ro bị phát hiện), thay `adb shell input tap` bằng cách chạm nhanh hơn (cần tìm thiết bị chạm trong `getevent -p`), hoặc chạy nhiều emulator song song.
 
 ## Kiểm tra sau khi sửa
 
