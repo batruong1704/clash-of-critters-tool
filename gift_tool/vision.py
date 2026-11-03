@@ -83,12 +83,12 @@ class Finder:
             return None
         return hit
 
-    def find_below(self, screen, name: str, y0: int, y1: int) -> Hit | None:
+    def find_below(self, screen, name: str, y0: int, y1: int, scales=None) -> Hit | None:
         """Tìm nút trong một dải ngang của ảnh, rồi trả tọa độ trên ảnh gốc."""
         height = screen.shape[0]
         top = min(max(0, y0), height - 2)
         bottom = min(max(top + 2, y1), height)
-        hit = self.find(screen[top:bottom], name)
+        hit = self.find(screen[top:bottom], name, scales)
         if hit is None:
             return None
         return Hit(hit.name, hit.x, hit.y + top, hit.score, hit.w, hit.h)
@@ -141,6 +141,22 @@ def avatar_point(screen, add: Hit) -> tuple[int, int]:
     width = screen.shape[1]
     x = int(add.x - 0.68 * width)
     return max(10, x), int(add.y)
+
+
+def scene_signature(screen):
+    """Thu nhỏ vùng sân, bỏ mép trên và nút X. Dùng để xem camera có trượt tới hộp quà không."""
+    height, width = screen.shape[:2]
+    y0 = int(0.16 * height)
+    y1 = int(0.80 * height)
+    x0 = int(0.10 * width)
+    x1 = int(0.90 * width)
+    y0 = min(max(0, y0), height - 2)
+    y1 = min(max(y0 + 2, y1), height)
+    x0 = min(max(0, x0), width - 2)
+    x1 = min(max(x0 + 2, x1), width)
+    gray = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (32, 48), interpolation=cv2.INTER_AREA)
+    return cv2.GaussianBlur(small, (3, 3), 0)
 
 
 def result_signature(screen, search: Hit):

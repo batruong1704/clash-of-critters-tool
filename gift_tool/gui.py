@@ -1,4 +1,4 @@
-"""Cửa sổ dán UID, bấm Bắt đầu / Dừng, xem tiến độ."""
+"""Cửa sổ dán UID, bấm Bắt đầu / Dừng, xem log tổng quan và log từng bước."""
 
 from __future__ import annotations
 
@@ -8,33 +8,50 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from gift_tool.adb_client import AdbClient
-from gift_tool.flow import LABELS, Runner
+from gift_tool.flow import LABELS, MAX_GIFTS, Runner
 from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
 
+WINDOW_WIDTH = 680
+COMPACT_HEIGHT = 520
+DETAIL_HEIGHT = 820
+OVERVIEW_LOG_LINES = 5
+DETAIL_LOG_LINES = 16
+HINT_WRAP = 640
 
-def parse_ids(text: str) -> tuple[list[str], list[str]]:
+
+def parse_ids(text: str) -> tuple[list[str], list[str], int]:
+    """Trả UID hợp lệ, dòng lỗi, và số ID trùng đã bỏ. Giữ thứ tự lần gặp đầu."""
     good, bad = [], []
+    seen: set[str] = set()
+    duplicated = 0
     chunks = text.replace(",", "\n").replace(";", "\n").splitlines()
     for chunk in chunks:
-        token = chunk.strip()
+        # Dấu cách dính khi dán từ game hoặc bảng tính làm ADB gõ sai UID.
+        token = "".join(chunk.split())
         if not token:
             continue
-        if token.isdigit() and 4 <= len(token) <= 15:
-            good.append(token)
-        else:
+        if not (token.isdigit() and 4 <= len(token) <= 15):
             bad.append(token)
-    return good, bad
+            continue
+        if token in seen:
+            duplicated += 1
+            continue
+        seen.add(token)
+        good.append(token)
+    return good, bad, duplicated
 
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Nhận quà MVP — Clash of Critters")
-        self.root.minsize(640, 560)
+        self.root.minsize(WINDOW_WIDTH, COMPACT_HEIGHT)
+        self.root.geometry(f"{WINDOW_WIDTH}x{COMPACT_HEIGHT}")
         self.stop = threading.Event()
         self.worker: threading.Thread | None = None
         self.finder = Finder()
+        self.detail_open = False
 
         frame = ttk.Frame(root, padding=12)
         frame.pack(fill="both", expand=True)
@@ -42,7 +59,7 @@ class App:
         ttk.Label(
             frame,
             text="Mở sẵn tab Add New (ô nhập UID). Lần đầu chỉ dán 1–2 ID. Nếu ADB đang tắt, bấm Chụp thử sẽ bật ADB và khởi động lại emulator một lần, rồi bạn mở lại game.",
-            wraplength=600,
+            wraplength=HINT_WRAP,
         ).pack(anchor="w")
 
         self.device_var = tk.StringVar(value="Chưa kết nối emulator")
@@ -57,27 +74,31 @@ class App:
         self.ids = tk.Text(frame, height=8, font=("Consolas", 11))
         self.ids.pack(fill="x")
 
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=8)
-        ttk.Button(row, text="Nạp file txt", command=self.load_file).pack(side="left")
-        ttk.Label(row, text="Dừng sau số quà").pack(side="left", padx=(12, 4))
-        self.max_gifts = tk.Spinbox(row, from_=1, to=20, width=5)
-        self.max_gifts.delete(0, "end")
-        self.max_gifts.insert(0, "20")
-        self.max_gifts.pack(side="left")
-
         run_row = ttk.Frame(frame)
-        run_row.pack(anchor="w")
+        run_row.pack(anchor="w", pady=(8, 0))
+        ttk.Button(run_row, text="Nạp file txt", command=self.load_file).pack(side="left")
         self.start_btn = ttk.Button(run_row, text="Bắt đầu", command=self.start)
-        self.start_btn.pack(side="left")
+        self.start_btn.pack(side="left", padx=(12, 0))
         self.stop_btn = ttk.Button(run_row, text="Dừng", command=self.request_stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
+        self.detail_btn = ttk.Button(run_row, text="Xem chi tiết log", command=self.toggle_detail)
+        self.detail_btn.pack(side="left", padx=6)
 
         self.progress = tk.StringVar(value="Sẵn sàng")
         ttk.Label(frame, textvariable=self.progress).pack(anchor="w", pady=(8, 2))
 
-        self.log_box = tk.Text(frame, height=14, state="disabled", font=("Consolas", 10))
-        self.log_box.pack(fill="both", expand=True)
+        overview = ttk.LabelFrame(frame, text="Log tổng quan", padding=4)
+        overview.pack(fill="x", pady=(4, 0))
+        self.log_box = tk.Text(
+            overview, height=OVERVIEW_LOG_LINES, state="disabled", font=("Consolas", 10), wrap="word"
+        )
+        self.log_box.pack(fill="x")
+
+        self.detail_frame = ttk.LabelFrame(frame, text="Log chi tiết", padding=4)
+        self.detail_box = tk.Text(
+            self.detail_frame, height=DETAIL_LOG_LINES, state="disabled", font=("Consolas", 10), wrap="word"
+        )
+        self.detail_box.pack(fill="both", expand=True)
 
     def load_file(self):
         path = filedialog.askopenfilename(filetypes=[("Text", "*.txt"), ("Tất cả", "*.*")])
@@ -91,23 +112,38 @@ class App:
     def start(self):
         if self.worker and self.worker.is_alive():
             return
-        ids, bad = parse_ids(self.ids.get("1.0", "end"))
+        ids, bad, duplicated = parse_ids(self.ids.get("1.0", "end"))
         if bad:
             self.write("Bỏ qua dòng không phải UID: " + ", ".join(bad[:8]))
+        if duplicated:
+            self.write(f"Bỏ {duplicated} ID trùng.")
         if not ids:
             self.write("Chưa có UID hợp lệ.")
             return
-        try:
-            max_gifts = int(self.max_gifts.get())
-        except ValueError:
-            max_gifts = 20
-        max_gifts = min(20, max(1, max_gifts))
         self.stop.clear()
+        self._clear(self.detail_box)
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-        self.progress.set(f"Đang chạy 0/{max_gifts} quà")
-        self.worker = threading.Thread(target=self._run, args=(ids, max_gifts), daemon=True)
+        self.progress.set(f"Đang chạy 0/{MAX_GIFTS} quà")
+        self.worker = threading.Thread(target=self._run, args=(ids,), daemon=True)
         self.worker.start()
+
+    def toggle_detail(self):
+        if self.detail_open:
+            self.detail_frame.pack_forget()
+            self.detail_open = False
+            self.detail_btn.configure(text="Xem chi tiết log")
+            self.root.minsize(WINDOW_WIDTH, COMPACT_HEIGHT)
+            self.root.geometry(f"{self.root.winfo_width()}x{COMPACT_HEIGHT}")
+            return
+        self.detail_frame.pack(fill="both", expand=True, pady=(8, 0))
+        self.detail_open = True
+        self.detail_btn.configure(text="Ẩn chi tiết log")
+        self.root.minsize(WINDOW_WIDTH, DETAIL_HEIGHT)
+        width = max(self.root.winfo_width(), WINDOW_WIDTH)
+        height = max(self.root.winfo_height(), DETAIL_HEIGHT)
+        self.root.geometry(f"{width}x{height}")
+        self.detail_box.see("end")
 
     def request_stop(self):
         self.stop.set()
@@ -119,7 +155,7 @@ class App:
     def preview(self):
         threading.Thread(target=self._preview, daemon=True).start()
 
-    def _run(self, ids: list[str], max_gifts: int):
+    def _run(self, ids: list[str]):
         try:
             adb = AdbClient()
             serial = adb.ensure_device()
@@ -131,10 +167,10 @@ class App:
                 if message.startswith("[") and "đã nhận" in message:
                     self.root.after(0, lambda m=message: self.progress.set(m))
 
-            runner = Runner(adb, self.finder, log, self.stop, max_gifts=max_gifts)
+            runner = Runner(adb, self.finder, log, self.stop, self.write_detail)
             counts = runner.run(ids)
             summary = (
-                f"Xong. Quà {counts['da_nhan_qua']}/{max_gifts}. "
+                f"Xong. Quà {counts['da_nhan_qua']}/{MAX_GIFTS}. "
                 + ", ".join(f"{LABELS[key]} {counts[key]}" for key in LABELS)
             )
             self.root.after(0, lambda text=summary: self.progress.set(text))
@@ -180,13 +216,27 @@ class App:
             self.write(f"Lỗi kiểm tra: {exc}")
 
     def write(self, message: str):
+        self._append(self.log_box, message)
+
+    def write_detail(self, message: str):
+        self._append(self.detail_box, message)
+
+    def _append(self, box: tk.Text, message: str):
         def append():
-            self.log_box.configure(state="normal")
-            self.log_box.insert("end", message + "\n")
-            self.log_box.see("end")
-            self.log_box.configure(state="disabled")
+            box.configure(state="normal")
+            box.insert("end", message + "\n")
+            box.see("end")
+            box.configure(state="disabled")
 
         self.root.after(0, append)
+
+    def _clear(self, box: tk.Text):
+        def clear():
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.configure(state="disabled")
+
+        self.root.after(0, clear)
 
 
 def main():

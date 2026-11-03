@@ -33,9 +33,9 @@ py -3 -m pip install -r requirements.txt
 | Chụp thử | Kiểm tra đã nối được emulator. Ảnh lưu ở `logs/chup-thu.png` |
 | Kiểm tra nút | Khoanh các nút tool đang thấy, mở ảnh `logs/kiem-tra.png` |
 | Nạp file txt | Đọc UID từ file, mỗi dòng một UID |
-| Dừng sau số quà | Trần số quà của lượt này, tối đa 20 |
-| Bắt đầu | Chạy danh sách |
+| Bắt đầu | Chạy danh sách. Dừng khi đủ 20 quà |
 | Dừng | Dừng sau bước đang làm |
+| Xem chi tiết log | Mở ô log từng bước. Bấm lần nữa để ẩn |
 
 Dòng `search: thấy` trong Kiểm tra nút nghĩa là tool đang nhìn đúng ô tìm UID. Chưa thấy thì đừng bấm Bắt đầu.
 
@@ -57,11 +57,11 @@ Ví dụ:
 3. Trong nhà có hộp quà vàng ở giữa thì bấm nhận, chọn một nút **Select**, rồi **OK**.
 4. Không có hộp quà thì bấm **X** để ra.
 5. Không thấy người chơi thì bỏ qua UID đó.
-6. Đủ số quà đã đặt, hoặc hết danh sách, thì dừng.
+6. Đủ 20 quà, hoặc hết danh sách, thì dừng.
 
 ## Đọc kết quả
 
-Log hiện ngay trên cửa sổ. Cùng nội dung được ghi vào `logs/ket-qua-ngày-giờ.csv`. Mở bằng Excel được.
+**Log tổng quan** luôn hiện, khung thấp, ghi từng UID và kết quả. **Log chi tiết** chỉ hiện khi bấm **Xem chi tiết log**, khung cao hơn, ghi từng bước đang làm, ví dụ gõ UID, bấm Visit, bấm hộp quà. Kết quả từng UID còn được ghi vào `logs/ket-qua-ngày-giờ.csv`. Mở bằng Excel được.
 
 | Trạng thái | Nghĩa |
 |---|---|
