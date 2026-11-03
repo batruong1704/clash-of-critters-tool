@@ -27,7 +27,7 @@ def imread(path: Path):
 
 def main():
     OUT.mkdir(exist_ok=True)
-    shots = list(ROOT.glob("*.png"))
+    shots = list((ROOT / "resource").glob("*.png"))
     for prefix, y0, y1, x0, x1, name in CROPS:
         src = next(p for p in shots if p.name.startswith(prefix))
         img = imread(src)

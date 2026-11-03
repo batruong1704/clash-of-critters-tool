@@ -4,7 +4,7 @@ from pathlib import Path
 
 import cv2
 
-from gift_tool.paths import ROOT
+from gift_tool.paths import RESOURCE, ROOT
 from gift_tool.vision import (
     Finder,
     avatar_point,
@@ -20,7 +20,7 @@ NAMES = ("search", "add", "visit", "gift", "select", "ok", "close")
 
 
 def screenshots() -> list[Path]:
-    return sorted(p for p in ROOT.glob("*.png") if p.name[:1].isdigit())
+    return sorted(p for p in RESOURCE.glob("*.png") if p.name[:1].isdigit())
 
 
 def main():
@@ -71,7 +71,7 @@ def main():
     if finder.find(by_prefix["2"][0], "results") is not None:
         raise SystemExit("Ảnh nhập UID trống không được nhận là Results")
 
-    notice = next(ROOT.glob("thông báo*.png"))
+    notice = next(RESOURCE.glob("*thông báo*.png"))
     if finder.find(imread(notice), "missing_id") is None:
         raise SystemExit("Ảnh thông báo ID sai phải được nhận")
     if finder.find(img2, "missing_id") is not None:

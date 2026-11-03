@@ -1,6 +1,6 @@
 """In điểm khớp ảnh mẫu trên các ảnh có sẵn. Chạy: py -3 tools/score_templates.py"""
 
-from gift_tool.paths import ROOT
+from gift_tool.paths import RESOURCE, ROOT
 from gift_tool.vision import Finder, avatar_point, field_point, imread
 
 NAMES = ("search", "add", "visit", "gift", "close", "select", "ok")
@@ -11,7 +11,7 @@ def main():
     print("templates")
     for name, (img, spec) in finder.templates.items():
         print(f"  {name}: {img.shape[1]}x{img.shape[0]} screen_w={spec['screen_w']} thr={spec['threshold']}")
-    files = sorted(ROOT.glob("*.png")) + sorted((ROOT / "logs").glob("*.png"))
+    files = sorted(RESOURCE.glob("*.png")) + sorted((ROOT / "logs").glob("*.png"))
     for path in files:
         img = imread(path)
         height, width = img.shape[:2]
