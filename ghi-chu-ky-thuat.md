@@ -46,17 +46,42 @@ Không có DOM. Mỗi nút là một file PNG trong `templates/`. OpenCV so mẫ
 
 **Nút X.** Có ở màn tìm bạn, trong nhà, và sau khi nhận quà. Chỉ bấm X khi không còn kính lúp tìm UID, để khỏi đóng cả tab Add New.
 
+## Đọc cấp người chơi
+
+Sau khi thấy hàng Results, trước khi bấm avatar. Hàm `player_level` trong `gift_tool/vision.py`. Ngưỡng `MIN_LEVEL = 150` trong `gift_tool/flow.py`.
+
+Nhãn cần đọc là viên đen **Lvl NNN** dưới tên, bên trái nút Add. Không đọc **Lvl** trên thẻ thú ở đầu màn hình (ví dụ Lvl 131 của thú mình).
+
+Cách đọc:
+
+1. Cắt vùng bên trái nút Add. Viên đen là mảng tối (`gray < 60`), rộng ít nhất 36px và rộng hơn 1,6 lần chiều cao.
+2. Chữ trắng trên viên. Nửa trái là chữ Lvl, nên chỉ giữ nét có tâm nằm sau 46% bề rộng viên.
+3. So từng nét với chữ số vẽ bằng Pillow, font **Malgun Bold** (`C:\Windows\Fonts\malgunbd.ttf`). Máy không có font này thì dùng Arial Bold. Nhận một chữ khi điểm khớp từ **0.64** và cách chữ đứng thứ hai ít nhất **0.08**. Một chữ hụt thì cả cấp thành rỗng.
+
+Quyết định:
+
+| Đọc được | Việc làm | Cột `trang_thai` |
+|---|---|---|
+| Dưới 150 | Không bấm avatar, không bấm Visit | `false`, ghi chú `cấp N, dưới 150` |
+| Từ 150 trở lên | Bấm avatar rồi Visit | như luồng nhận quà |
+| Rỗng | Vẫn vào nhà. Log: *Không đọc được cấp, vẫn vào nhà* | như luồng nhận quà |
+
+**Font.** Arial Bold đọc chữ **1** khoảng **0.56**, dưới ngưỡng, nên cấp có chữ 1 (131, 149, …) thành rỗng và tool vẫn Visit. Trên ảnh ADB 720×1280, chữ 9 cuối của `Lvl 299` cũng chỉ **0.637**. Malgun Bold khớp chữ trong game: chữ 1 khoảng **0.79**, chữ 9 khoảng **0.89**. Đừng đổi lại Arial, đừng cài Tesseract.
+
+Ảnh kiểm tra: `resource/3. nhập id và tìm kiếm.png` phải đọc **299**. `py -3 -m gift_tool.self_test` dừng nếu ra số khác.
+
 ## Luồng một UID đang chạy
 
 Code nằm ở `process_one` trong `gift_tool/flow.py`.
 
 1. Phải thấy kính lúp. Không thấy thì dừng, không bấm linh tinh.
 2. Bấm ô nhập, xóa chữ cũ, gõ UID, bấm kính lúp.
-3. Chụp một ảnh. Thấy chữ Results và nút Add ngay bên dưới thì bấm avatar bên trái nút Add.
-4. Không thấy hàng Results thì ghi **ID sai** và sang UID sau. Không bấm dòng *Players you may know*.
-5. Thấy Visit thì bấm. Ảnh sau đó vẫn còn Visit thì bấm thêm một lần.
-6. Trong nhà: thấy hộp quà hoặc đã hiện Select thì nhận quà (bấm quà, Select, OK). Không thấy thì bấm X và ghi **không có quà**.
-7. Sau OK, bấm X cho đến khi thấy lại kính lúp. Không thấy lại thì dừng cả lượt.
+3. Chụp một ảnh. Thấy chữ Results và nút Add ngay bên dưới thì đọc nhãn Lvl trên hàng đó.
+4. Cấp dưới 150 thì ghi **false** và sang UID sau, không bấm avatar. Cấp từ 150 trở lên, hoặc không đọc được cấp, thì bấm avatar bên trái nút Add.
+5. Không thấy hàng Results thì ghi **ID sai** và sang UID sau. Không bấm dòng *Players you may know*.
+6. Thấy Visit thì bấm. Ảnh sau đó vẫn còn Visit thì bấm thêm một lần.
+7. Trong nhà: thấy hộp quà hoặc đã hiện Select thì nhận quà (bấm quà, Select, OK). Không thấy thì bấm X và ghi **không có quà**.
+8. Sau OK, bấm X cho đến khi thấy lại kính lúp. Không thấy lại thì dừng cả lượt.
 
 Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ket-qua-*.csv`, cột `id`, `trang_thai`, `giay`, `ghi_chu`.
 
@@ -71,7 +96,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `gift_tool/adb_client.py` | Chụp và bấm |
 | `templates/` | Ảnh mẫu nút |
 | `logs/` | CSV và ảnh chụp thử |
-| `requirements.txt` | `opencv-python-headless`, `numpy` |
+| `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow` |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
 
