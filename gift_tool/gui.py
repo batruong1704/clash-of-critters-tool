@@ -13,11 +13,16 @@ from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
 
 WINDOW_WIDTH = 680
-COMPACT_HEIGHT = 520
-DETAIL_HEIGHT = 820
-OVERVIEW_LOG_LINES = 5
+COMPACT_HEIGHT = 580
+DETAIL_PANEL = 420
+OPEN_WIDTH = WINDOW_WIDTH + DETAIL_PANEL
+OVERVIEW_LOG_LINES = 10
 DETAIL_LOG_LINES = 16
 HINT_WRAP = 640
+UID_MIN_LEN = 4
+UID_MAX_LEN = 15
+SCAN_COUNT_DEFAULT = 100
+SCAN_COUNT_MAX = 5000
 
 
 def parse_ids(text: str) -> tuple[list[str], list[str], int]:
@@ -31,7 +36,7 @@ def parse_ids(text: str) -> tuple[list[str], list[str], int]:
         token = "".join(chunk.split())
         if not token:
             continue
-        if not (token.isdigit() and 4 <= len(token) <= 15):
+        if not (token.isdigit() and UID_MIN_LEN <= len(token) <= UID_MAX_LEN):
             bad.append(token)
             continue
         if token in seen:
@@ -40,6 +45,19 @@ def parse_ids(text: str) -> tuple[list[str], list[str], int]:
         seen.add(token)
         good.append(token)
     return good, bad, duplicated
+
+
+def scan_ids(start: str, count: int) -> list[str]:
+    """ID đầu, rồi cộng 1 cho mỗi lần quét. Giữ số chữ số ban đầu nếu có số 0 đứng trước."""
+    width = len(start)
+    first = int(start)
+    ids = []
+    for offset in range(count):
+        uid = str(first + offset).zfill(width)
+        if len(uid) > UID_MAX_LEN:
+            break
+        ids.append(uid)
+    return ids
 
 
 class App:
@@ -53,8 +71,13 @@ class App:
         self.finder = Finder()
         self.detail_open = False
 
-        frame = ttk.Frame(root, padding=12)
-        frame.pack(fill="both", expand=True)
+        self.body = ttk.Frame(root, padding=12)
+        self.body.pack(fill="both", expand=True)
+        self.body.columnconfigure(0, weight=1)
+        self.body.rowconfigure(0, weight=1)
+
+        frame = ttk.Frame(self.body)
+        frame.grid(row=0, column=0, sticky="nsew")
 
         ttk.Label(
             frame,
@@ -70,17 +93,44 @@ class App:
         ttk.Button(buttons, text="Chụp thử", command=self.capture_only).pack(side="left")
         ttk.Button(buttons, text="Kiểm tra nút", command=self.preview).pack(side="left", padx=6)
 
-        ttk.Label(frame, text="Danh sách UID, mỗi dòng một ID").pack(anchor="w", pady=(10, 2))
-        self.ids = tk.Text(frame, height=8, font=("Consolas", 11))
-        self.ids.pack(fill="x")
+        notebook = ttk.Notebook(frame)
+        notebook.pack(fill="x", pady=(10, 0))
+        list_tab = ttk.Frame(notebook, padding=(0, 8, 0, 0))
+        scan_tab = ttk.Frame(notebook, padding=(0, 8, 0, 0))
+        notebook.add(list_tab, text="Nhập danh sách")
+        notebook.add(scan_tab, text="Quét ID")
+
+        ttk.Label(list_tab, text="Danh sách UID, mỗi dòng một ID").pack(anchor="w")
+        self.ids = tk.Text(list_tab, height=6, font=("Consolas", 11))
+        self.ids.pack(fill="x", pady=(2, 0))
+        list_row = ttk.Frame(list_tab)
+        list_row.pack(anchor="w", pady=(8, 0))
+        ttk.Button(list_row, text="Nạp file txt", command=self.load_file).pack(side="left")
+        self.start_btn = ttk.Button(list_row, text="Bắt đầu", command=self.start)
+        self.start_btn.pack(side="left", padx=(12, 0))
+
+        ttk.Label(
+            scan_tab,
+            text="ID đầu là lượt 1. Mỗi lần quét sau cộng thêm 1.",
+            wraplength=HINT_WRAP,
+        ).pack(anchor="w")
+        scan_row = ttk.Frame(scan_tab)
+        scan_row.pack(anchor="w", pady=(8, 0))
+        ttk.Label(scan_row, text="ID đầu").pack(side="left")
+        self.scan_start = ttk.Entry(scan_row, width=16, font=("Consolas", 11))
+        self.scan_start.pack(side="left", padx=(6, 0))
+        ttk.Label(scan_row, text="Số lần").pack(side="left", padx=(10, 4))
+        self.scan_count = tk.Spinbox(scan_row, from_=1, to=SCAN_COUNT_MAX, width=6)
+        self.scan_count.delete(0, "end")
+        self.scan_count.insert(0, str(SCAN_COUNT_DEFAULT))
+        self.scan_count.pack(side="left")
+        self.scan_btn = ttk.Button(scan_row, text="Quét", command=self.start_scan)
+        self.scan_btn.pack(side="left", padx=6)
 
         run_row = ttk.Frame(frame)
         run_row.pack(anchor="w", pady=(8, 0))
-        ttk.Button(run_row, text="Nạp file txt", command=self.load_file).pack(side="left")
-        self.start_btn = ttk.Button(run_row, text="Bắt đầu", command=self.start)
-        self.start_btn.pack(side="left", padx=(12, 0))
         self.stop_btn = ttk.Button(run_row, text="Dừng", command=self.request_stop, state="disabled")
-        self.stop_btn.pack(side="left", padx=6)
+        self.stop_btn.pack(side="left")
         self.detail_btn = ttk.Button(run_row, text="Xem chi tiết log", command=self.toggle_detail)
         self.detail_btn.pack(side="left", padx=6)
 
@@ -94,7 +144,7 @@ class App:
         )
         self.log_box.pack(fill="x")
 
-        self.detail_frame = ttk.LabelFrame(frame, text="Log chi tiết", padding=4)
+        self.detail_frame = ttk.LabelFrame(self.body, text="Log chi tiết", padding=4)
         self.detail_box = tk.Text(
             self.detail_frame, height=DETAIL_LOG_LINES, state="disabled", font=("Consolas", 10), wrap="word"
         )
@@ -120,29 +170,56 @@ class App:
         if not ids:
             self.write("Chưa có UID hợp lệ.")
             return
+        self._begin(ids)
+
+    def start_scan(self):
+        if self.worker and self.worker.is_alive():
+            return
+        raw = "".join(self.scan_start.get().split())
+        if not (raw.isdigit() and UID_MIN_LEN <= len(raw) <= UID_MAX_LEN):
+            self.write("ID đầu phải là số, dài 4 đến 15 chữ số.")
+            return
+        try:
+            count = int(self.scan_count.get())
+        except ValueError:
+            self.write("Số lần quét không hợp lệ.")
+            return
+        count = min(SCAN_COUNT_MAX, max(1, count))
+        ids = scan_ids(raw, count)
+        if not ids:
+            self.write("Không tạo được UID để quét.")
+            return
+        if len(ids) < count:
+            self.write(f"Chỉ quét tới {ids[-1]} vì UID dài quá 15 chữ số.")
+        self.write(f"Quét nối tiếp {len(ids)} ID, từ {ids[0]} đến {ids[-1]}.")
+        self._begin(ids)
+
+    def _begin(self, ids: list[str]):
         self.stop.clear()
         self._clear(self.detail_box)
         self.start_btn.configure(state="disabled")
+        self.scan_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.progress.set(f"Đang chạy 0/{MAX_GIFTS} quà")
         self.worker = threading.Thread(target=self._run, args=(ids,), daemon=True)
         self.worker.start()
 
     def toggle_detail(self):
+        height = self.root.winfo_height()
         if self.detail_open:
-            self.detail_frame.pack_forget()
+            self.detail_frame.grid_remove()
+            self.body.columnconfigure(1, weight=0, minsize=0)
             self.detail_open = False
             self.detail_btn.configure(text="Xem chi tiết log")
             self.root.minsize(WINDOW_WIDTH, COMPACT_HEIGHT)
-            self.root.geometry(f"{self.root.winfo_width()}x{COMPACT_HEIGHT}")
+            self.root.geometry(f"{WINDOW_WIDTH}x{height}")
             return
-        self.detail_frame.pack(fill="both", expand=True, pady=(8, 0))
+        self.body.columnconfigure(1, weight=1, minsize=DETAIL_PANEL)
+        self.detail_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         self.detail_open = True
         self.detail_btn.configure(text="Ẩn chi tiết log")
-        self.root.minsize(WINDOW_WIDTH, DETAIL_HEIGHT)
-        width = max(self.root.winfo_width(), WINDOW_WIDTH)
-        height = max(self.root.winfo_height(), DETAIL_HEIGHT)
-        self.root.geometry(f"{width}x{height}")
+        self.root.minsize(OPEN_WIDTH, COMPACT_HEIGHT)
+        self.root.geometry(f"{max(self.root.winfo_width(), OPEN_WIDTH)}x{height}")
         self.detail_box.see("end")
 
     def request_stop(self):
@@ -179,6 +256,7 @@ class App:
             self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
         finally:
             self.root.after(0, lambda: self.start_btn.configure(state="normal"))
+            self.root.after(0, lambda: self.scan_btn.configure(state="normal"))
             self.root.after(0, lambda: self.stop_btn.configure(state="disabled"))
 
     def _capture_only(self):

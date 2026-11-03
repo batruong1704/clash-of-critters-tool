@@ -32,8 +32,8 @@ py -3 -m pip install -r requirements.txt
 |---|---|
 | Chụp thử | Kiểm tra đã nối được emulator. Ảnh lưu ở `logs/chup-thu.png` |
 | Kiểm tra nút | Khoanh các nút tool đang thấy, mở ảnh `logs/kiem-tra.png` |
-| Nạp file txt | Đọc UID từ file, mỗi dòng một UID |
-| Bắt đầu | Chạy danh sách. Dừng khi đủ 20 quà |
+| Nhập danh sách | Tab dán hoặc nạp file UID, rồi bấm Bắt đầu |
+| Quét ID | Tab nhập ID đầu và số lần. Mỗi lần sau cộng thêm 1 |
 | Dừng | Dừng sau bước đang làm |
 | Xem chi tiết log | Mở ô log từng bước. Bấm lần nữa để ẩn |
 
@@ -41,7 +41,7 @@ Dòng `search: thấy` trong Kiểm tra nút nghĩa là tool đang nhìn đúng 
 
 ## Danh sách UID
 
-Mỗi dòng một UID, chỉ gồm chữ số, dài từ 4 đến 15 số. Có thể dán nhiều dòng, hoặc cách nhau bởi dấu phẩy. Dòng không phải số sẽ bị bỏ qua và hiện trong log.
+Ở tab **Nhập danh sách**. Mỗi dòng một UID, chỉ gồm chữ số, dài từ 4 đến 15 số. Có thể dán nhiều dòng, hoặc cách nhau bởi dấu phẩy. Dòng không phải số sẽ bị bỏ qua và hiện trong log.
 
 Ví dụ:
 
@@ -57,11 +57,15 @@ Ví dụ:
 3. Trong nhà có hộp quà vàng ở giữa thì bấm nhận, chọn một nút **Select**, rồi **OK**.
 4. Không có hộp quà thì bấm **X** để ra.
 5. Không thấy người chơi thì bỏ qua UID đó.
-6. Đủ 20 quà, hoặc hết danh sách, thì dừng.
+6. Đủ 20 quà, hết danh sách, hoặc hết số lần quét nối tiếp, thì dừng.
+
+## Quét ID
+
+Mở tab **Quét ID**, điền **ID đầu** và **Số lần**, rồi bấm **Quét**. Tool không đọc ô danh sách ở tab kia. ID đầu là lượt 1, lượt sau là ID đó cộng 1. Số lần 100 nghĩa là quét 100 ID rồi dừng, kể cả ID sai và nhà không có quà. Đủ 20 quà thì dừng sớm hơn.
 
 ## Đọc kết quả
 
-**Log tổng quan** luôn hiện, khung thấp, ghi từng UID và kết quả. **Log chi tiết** chỉ hiện khi bấm **Xem chi tiết log**, khung cao hơn, ghi từng bước đang làm, ví dụ gõ UID, bấm Visit, bấm hộp quà. Kết quả từng UID còn được ghi vào `logs/ket-qua-ngày-giờ.csv`. Mở bằng Excel được.
+**Log tổng quan** luôn hiện bên trái, khung thấp, ghi từng UID và kết quả. **Log chi tiết** chỉ hiện khi bấm **Xem chi tiết log**, nằm bên phải và cao hơn, ghi từng bước đang làm, ví dụ gõ UID, bấm Visit, bấm hộp quà. Kết quả từng UID còn được ghi vào `logs/ket-qua-ngày-giờ.csv`. Mở bằng Excel được.
 
 | Trạng thái | Nghĩa |
 |---|---|
