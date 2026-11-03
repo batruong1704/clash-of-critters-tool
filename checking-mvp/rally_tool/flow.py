@@ -17,6 +17,7 @@ from rally_tool.vision import (
     bottom_join,
     card_joins,
     chat_join_buttons,
+    home_goldrush,
     jump_down,
     list_joins,
     load_icons,
@@ -34,6 +35,8 @@ SCROLL_DIFF = 6.0
 BOTTOM_DIFF = 4.0
 POLL = 2.5
 GOLDRUSH_LOAD = 10.0
+# Hoạt cảnh vào Goldrush khoảng 2 giây. Chụp trong lúc này sẽ thấy màn đang trượt.
+GOLDRUSH_ANIM = 2.0
 AFTER_TAP = (0.55, 0.85)
 SCROLL_PAUSE = (0.45, 0.7)
 
@@ -113,20 +116,21 @@ class Runner:
         elif scene == "reward":
             self._close_reward(reading)
         else:
-            self._unknown_screen(shot)
+            self._unknown_screen(reading, shot)
 
-    def _enter_goldrush(self, reading: Reading) -> None:
+    def _enter_goldrush(self, reading: Reading, hit=None) -> None:
         if time.time() < self._goldrush_hold:
             self._pause(0.4, 0.6)
             return
-        if reading.goldrush is None:
+        target = hit if hit is not None else reading.goldrush
+        if target is None:
             self._pause(0.4, 0.6)
             return
         self.log("Vào Goldrush.")
-        self.adb.tap(reading.goldrush.x, reading.goldrush.y)
+        self.adb.tap(target.x, target.y)
         # Bản đồ hiện chậm. Bấm lần hai trong lúc đang vào sẽ hủy hoặc bấm nhầm.
         self._goldrush_hold = time.time() + GOLDRUSH_LOAD
-        self._pause(0.8, 1.1)
+        self._pause(GOLDRUSH_ANIM, GOLDRUSH_ANIM)
 
     def _open_chat(self, reading: Reading) -> None:
         if reading.chat is None:
@@ -315,7 +319,12 @@ class Runner:
         self.adb.tap(target.x, target.y)
         self._pause(*AFTER_TAP)
 
-    def _unknown_screen(self, shot) -> None:
+    def _unknown_screen(self, reading: Reading, shot) -> None:
+        # Ra khỏi mode quá xa: thanh dưới vẫn có nút Goldrush thì bấm để vào lại.
+        hit = home_goldrush(self.finder, shot)
+        if hit is not None:
+            self._enter_goldrush(reading, hit)
+            return
         self._unknown += 1
         if self._unknown == 1 or self._unknown % 8 == 0:
             from gift_tool.vision import imwrite

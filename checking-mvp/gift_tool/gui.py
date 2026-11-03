@@ -46,7 +46,7 @@ LOG_BAD = "#b42318"
 LOG_FONT = ("Consolas", 10)
 OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào")
 GIFT_HINT = "Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID."
-RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
+RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Ra khỏi mode thì bấm lại nút Goldrush. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
 BAD_MARKS = (
     "lỗi",
     "timeout",

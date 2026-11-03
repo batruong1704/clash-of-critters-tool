@@ -31,6 +31,8 @@ CHAT_LIGHT = 0.50
 # Kính lúp Goldrush nằm bên trái. Kính lúp ô UID nằm bên phải.
 MAP_SEARCH_SCORE = 0.72
 MAP_SEARCH_X = 0.40
+# Nút mode khi không được chọn khớp thấp hơn lúc đang đứng ở sân. Bản đồ Goldrush chỉ khoảng 0.32.
+HOME_SCORE = 0.45
 
 # Thanh Join đo được khoảng hue 44–49. Vòng tròn gửi tin khoảng hue 59, loại bằng hình.
 JOIN_HUE = (38, 56)
@@ -166,6 +168,23 @@ def bottom_join(reading: Reading) -> Hit | None:
     if not found:
         return None
     return min(found, key=lambda hit: hit.y)
+
+
+def home_goldrush(finder: Finder, screen) -> Hit | None:
+    """Nút Goldrush trên thanh mode. Có thì bấm để vào lại, trừ khi đang ở trong bản đồ."""
+    hit = finder.locate(screen, "goldrush")
+    if hit is None or hit.w == 0:
+        return None
+    height = screen.shape[0]
+    close = finder.find(screen, "close")
+    if close is not None and close.y > height * 0.85:
+        return None
+    threshold = finder.templates["goldrush"][1]["threshold"]
+    if hit.score >= threshold:
+        return hit
+    if hit.score >= HOME_SCORE and hit.y > height * 0.80:
+        return hit
+    return None
 
 
 def topmost(hits: list[Hit]) -> Hit:

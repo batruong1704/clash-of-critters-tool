@@ -16,6 +16,7 @@ from rally_tool.flow import Runner
 from rally_tool.vision import (
     card_joins,
     chat_join_buttons,
+    home_goldrush,
     jump_down,
     list_joins,
     load_icons,
@@ -131,6 +132,75 @@ def test_other_screens() -> None:
     if abs(reading.chat.y - reading.close.y) < 80:
         raise SystemExit("Điểm mở chat quá gần nút X")
     print("sân và goldrush có sẵn: đúng")
+
+
+def test_returns_home() -> None:
+    """Ra khỏi Goldrush mà thanh mode còn nút thì bấm để vào lại. Trong bản đồ thì không."""
+    finder = _finder()
+    yard = imread(next(RESOURCE.glob("0. màn hình ở sản.png")))
+    if home_goldrush(finder, yard) is None:
+        raise SystemExit("Sân phải thấy nút Goldrush")
+    inside = imread(next(RESOURCE.glob("0. màn hình chế độ goldrush.png")))
+    if home_goldrush(finder, inside) is not None:
+        raise SystemExit("Đang trong Goldrush không được bấm lại nút mode")
+    shots = _load()
+    if home_goldrush(finder, shots["Step 1"]) is not None or home_goldrush(finder, shots["Step 2"]) is not None:
+        raise SystemExit("Bản đồ rally hoặc chat không được nhận nút Goldrush")
+    pinball = imread(next(RESOURCE.glob("1. giao diện chính tab pinball.png")))
+    reading = read_screen(finder, pinball)
+    hit = home_goldrush(finder, pinball)
+    if reading.scene in ("map", "chat", "single", "multi", "reward"):
+        raise SystemExit(f"Màn ngoài mode bị nhận là đang chơi, ra {reading.scene}")
+    if hit is None or hit.y < pinball.shape[0] * 0.80:
+        raise SystemExit(f"Không thấy nút Goldrush ở thanh dưới, ra {hit}")
+    stop = threading.Event()
+    tape = _HomeTape(stop, pinball)
+    runner = Runner(tape, tape.log, stop, finder)
+    runner.quick = True
+    runner.run()
+    if tape.taps != [(hit.x, hit.y)]:
+        raise SystemExit(f"Phải bấm đúng nút Goldrush {hit.x, hit.y}, ra {tape.taps}")
+    print("ra khỏi mode: bấm lại Goldrush")
+
+
+def test_goldrush_waits_out_the_animation() -> None:
+    """Sau cú bấm Goldrush phải chờ hết 2 giây hoạt cảnh rồi mới chụp tiếp."""
+    from rally_tool.flow import GOLDRUSH_ANIM
+
+    stop = threading.Event()
+    shot = _load()["Step 6"]
+    tape = _HomeTape(stop, shot)
+    runner = Runner(tape, tape.log, stop, _finder())
+    waits = []
+    runner._pause = lambda low, high: waits.append((low, high))
+    runner._enter_goldrush(None, type("Hit", (), {"x": 3, "y": 4})())
+    if tape.taps != [(3, 4)] or waits != [(GOLDRUSH_ANIM, GOLDRUSH_ANIM)] or GOLDRUSH_ANIM < 2:
+        raise SystemExit(f"Phải bấm Goldrush rồi chờ hết hoạt cảnh, ra {tape.taps} {waits}")
+    print("vào Goldrush: chờ hết hoạt cảnh rồi mới xem tiếp")
+
+
+class _HomeTape:
+    def __init__(self, stop, shot):
+        self.stop = stop
+        self.shot = shot
+        self.taps = []
+        self.n = 0
+
+    def screenshot(self):
+        self.n += 1
+        if self.n > 4:
+            self.stop.set()
+        return self.shot
+
+    def tap(self, x: int, y: int) -> None:
+        self.taps.append((int(x), int(y)))
+        self.stop.set()
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 350) -> None:
+        raise SystemExit("Màn ngoài mode không được kéo")
+
+    def log(self, message: str) -> None:
+        return None
 
 
 def test_loop() -> None:
@@ -475,6 +545,8 @@ class _Tape:
 def main() -> None:
     test_scenes()
     test_other_screens()
+    test_returns_home()
+    test_goldrush_waits_out_the_animation()
     test_loop()
     test_first_chat_does_not_tap_around()
     test_scrolls_until_newest()
