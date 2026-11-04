@@ -4,7 +4,7 @@ from pathlib import Path
 
 import cv2
 
-from gift_tool.flow import Runner
+from gift_tool.flow import UI_SCALES, ClaimLimit, Runner
 from gift_tool.paths import RESOURCE, ROOT, note_use
 import numpy as np
 
@@ -167,6 +167,7 @@ def main():
     _assert_pinball_multi_digit(by_prefix["7"][0])
     _assert_leave_after_gift(finder, by_prefix["9"][0], by_prefix["2"][0])
     _assert_game_update_2026_11(finder, by_prefix["2"][0])
+    _assert_claim_limit(finder, by_prefix["9"][0])
     print("self-test ok")
 
 
@@ -220,6 +221,12 @@ class _Shots:
     def tap(self, x: int, y: int) -> None:
         self.taps.append((int(x), int(y)))
 
+    def clear_text(self) -> None:
+        return None
+
+    def input_text(self, text: str) -> None:
+        self.taps.append((-1, len(text)))
+
 
 def _assert_leave_after_gift(finder, house, search) -> None:
     """Sau OK chỉ bấm X một lần trên ảnh nhà, rồi nhận kính lúp. Không bấm lần hai."""
@@ -244,6 +251,49 @@ def _assert_leave_after_gift(finder, house, search) -> None:
     if not runner._leave_after_gift(house) or len(adb.taps) != 1:
         raise SystemExit("Nhà còn trên màn cũng chỉ được bấm X một lần")
     print("thoát nhà sau quà: một cú bấm X rồi về ô nhập")
+
+
+def _assert_claim_limit(finder, house) -> None:
+    """Wall of Memories báo hết lượt thì dừng cả lượt, không bấm tiếp và không sang ID sau."""
+    claim = imread(RESOURCE / "cap-nhat-2026-11" / "claim-limit-reached.png")
+    hit = finder.find(claim, "claim_limit", scales=UI_SCALES)
+    if hit is None:
+        raise SystemExit("Màn Claim limit reached for this week phải được nhận")
+    for path in sorted(RESOURCE.rglob("*.png")):
+        if path.name == "claim-limit-reached.png":
+            continue
+        found = finder.find(imread(path), "claim_limit", scales=UI_SCALES)
+        if found is not None:
+            raise SystemExit(f"{path.name} không được nhận nhầm là hết lượt, điểm {found.score:.2f}")
+    watched = Runner(_Shots([house]), finder, lambda *_args: None, _Stop())
+    watched._watch_claim = True
+    watched._shot()
+
+    adb = _Shots([claim, claim])
+    runner = Runner(adb, finder, lambda *_args: None, _Stop())
+    runner._watch_claim = True
+    try:
+        runner._wait_house()
+    except ClaimLimit:
+        stopped = True
+    else:
+        stopped = False
+    if not stopped:
+        raise SystemExit("Đang vào nhà mà thấy hết lượt thì phải dừng")
+    if adb.taps:
+        raise SystemExit(f"Thấy hết lượt thì không được bấm, đã bấm {adb.taps}")
+
+    notes = []
+    adb = _Shots([claim])
+    runner = Runner(adb, finder, notes.append, _Stop())
+    counts = runner.run(["38393401", "111"])
+    if adb.taps:
+        raise SystemExit(f"Hết lượt ngay từ đầu thì không được bấm, đã bấm {adb.taps}")
+    if counts["het_luot"] != 1:
+        raise SystemExit(f"Phải ghi một lần hết lượt rồi dừng, ra {counts}")
+    if not any("hết lượt" in note.lower() for note in notes):
+        raise SystemExit(f"Log phải báo dừng vì hết lượt, ra {notes}")
+    print("hết lượt nhận trong tuần: nhận câu Claim limit và dừng cả lượt")
 
 
 def _assert_game_update_2026_11(finder, search) -> None:

@@ -26,6 +26,8 @@ SPECS = {
     "select": {"threshold": 0.75, "screen_w": 580, "color": False},
     "ok": {"threshold": 0.75, "screen_w": 584, "color": False},
     "missing_id": {"threshold": 0.70, "screen_w": 553, "color": False, "text": True},
+    # Câu "Claim limit reached for this week." trên Wall of Memories. Chữ trắng viền đen, số like đổi nên không lấy cả màn.
+    "claim_limit": {"threshold": 0.70, "screen_w": 558, "color": False, "text": True},
     "goldrush": {"threshold": 0.78, "screen_w": 560, "color": True},
     "friends": {"threshold": 0.80, "screen_w": 560, "color": True},
     "community": {"threshold": 0.80, "screen_w": 559, "color": True},

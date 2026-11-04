@@ -32,6 +32,7 @@ LABELS = {
     "khong_co_qua": "không có quà",
     "id_sai": "ID sai",
     "cap_thap": "false",
+    "het_luot": "hết lượt nhận",
     "loi_timeout": "lỗi / timeout",
 }
 
@@ -89,6 +90,10 @@ class Stopped(Exception):
     pass
 
 
+class ClaimLimit(Exception):
+    """Tài khoản đang nhận đã hết lượt trong tuần. Sang ID sau cũng không nhận được."""
+
+
 class Runner:
     def __init__(self, adb: AdbClient, finder: Finder, log, stop, detail=None, max_gifts: int = MAX_GIFTS):
         self.adb = adb
@@ -100,6 +105,8 @@ class Runner:
         self.pinballs = 0
         self._gift_pinball = None
         self._pinball_shot = None
+        self._watch_claim = False
+        self._claimed = False
         self._clock = time.time()
 
     def run(self, ids: list[str]) -> dict[str, int]:
@@ -118,7 +125,13 @@ class Runner:
                 self.log("Emulator đang ngang. Hãy xoay dọc, giống ảnh mẫu, rồi chạy lại.")
                 return self._done(counts)
             self._step("Kiểm tra ô nhập UID")
-            if not self._open_uid_field(shot):
+            try:
+                opened = self._open_uid_field(shot)
+            except ClaimLimit:
+                self._claim_limit_stop(counts)
+                self._summary(counts)
+                return self._done(counts)
+            if not opened:
                 self._step("Không tìm được đường tới ô nhập UID", headline=True)
                 self.log(
                     "Không tự mở được ô nhập UID. Hãy mở tab Add New trong game rồi bấm Bắt đầu. "
@@ -140,6 +153,9 @@ class Runner:
                 self._clock = started
                 try:
                     status, note, ready = self.process_one(uid)
+                except ClaimLimit:
+                    self._claim_limit_stop(counts, writer, handle, uid, started)
+                    break
                 except Stopped:
                     self._step("Dừng theo lệnh", headline=True)
                     self.log("Đã dừng.")
@@ -155,7 +171,11 @@ class Runner:
                 self._log_note(f"{LABELS[status]} ({seconds:.1f}s). {note}{total}")
                 if not ready:
                     self._step("Mất ô nhập UID, tự mở lại")
-                    ready = self._open_uid_field()
+                    try:
+                        ready = self._open_uid_field()
+                    except ClaimLimit:
+                        self._claim_limit_stop(counts)
+                        break
                 if not ready:
                     self.log("Không tự mở lại được ô nhập UID. Dừng để khỏi bấm nhầm. Mở lại tab Add New rồi chạy tiếp các ID còn lại.")
                     break
@@ -166,6 +186,8 @@ class Runner:
     def process_one(self, uid: str) -> tuple[str, str, bool]:
         self._gift_pinball = None
         self._pinball_shot = None
+        self._watch_claim = False
+        self._claimed = False
         self._step("Tìm ô nhập UID")
         shot = self._shot()
         search = self._uid_search(shot)
@@ -206,6 +228,8 @@ class Runner:
             self._step(f"Cấp {level}")
 
         self._step("Bấm avatar")
+        # Từ đây có thể rơi vào Wall of Memories. Hết lượt thì dừng cả lượt, không sang ID sau.
+        self._watch_claim = True
         self.adb.tap(*avatar_point(shot, found))
         self._step("Chờ nút Visit")
         shot, visit = self._wait_visit()
@@ -283,6 +307,7 @@ class Runner:
             self.pinballs += amount
             note = f"đã bấm Select và OK, {amount} pinball"
             self._step(f"Đã bấm Select và OK, {amount} pinball", headline=True)
+        self._claimed = True
         ready = self._leave_after_gift(after)
         return "da_nhan_qua", note, ready
 
@@ -558,26 +583,33 @@ class Runner:
 
     def _open_uid_field(self, shot=None) -> bool:
         """Từ màn quen nào cũng mò về tab Add New: Goldrush, sân chính, panel hồ sơ sai tab, popup còn sót."""
-        deadline = time.time() + NAV_TIMEOUT
-        actions = 0
-        scales = None
-        while time.time() < deadline and actions < NAV_MAX_ACTIONS:
-            self._check()
-            if shot is None:
-                shot = self._shot()
-            if self._search_ready(shot, scales):
+        previous = self._watch_claim
+        self._watch_claim = True
+        try:
+            if shot is not None:
+                self._raise_if_claim_limit(shot)
+            deadline = time.time() + NAV_TIMEOUT
+            actions = 0
+            scales = None
+            while time.time() < deadline and actions < NAV_MAX_ACTIONS:
+                self._check()
+                if shot is None:
+                    shot = self._shot()
+                if self._search_ready(shot, scales):
+                    return True
+                scales = UI_SCALES
+                if self._nav_step(shot):
+                    actions += 1
+                else:
+                    self._pause(*POLL_PAUSE)
+                shot = None
+            shot = self._shot()
+            if self._search_ready(shot, UI_SCALES):
                 return True
-            scales = UI_SCALES
-            if self._nav_step(shot):
-                actions += 1
-            else:
-                self._pause(*POLL_PAUSE)
-            shot = None
-        shot = self._shot()
-        if self._search_ready(shot, UI_SCALES):
-            return True
-        imwrite(LOGS / LOST_SCREEN_FILE, shot)
-        return False
+            imwrite(LOGS / LOST_SCREEN_FILE, shot)
+            return False
+        finally:
+            self._watch_claim = previous
 
     def _nav_step(self, shot) -> bool:
         """Một việc cho màn hiện tại. False nghĩa là chưa nhận ra màn, chờ rồi chụp lại."""
@@ -658,7 +690,36 @@ class Runner:
 
     def _shot(self):
         self._check()
-        return self.adb.screenshot()
+        shot = self.adb.screenshot()
+        if self._watch_claim:
+            self._raise_if_claim_limit(shot)
+        return shot
+
+    def _raise_if_claim_limit(self, shot) -> None:
+        """Câu Claim limit reached for this week. Tài khoản này nhận thêm cũng không được."""
+        if self.finder.find(shot, "claim_limit", scales=UI_SCALES) is not None:
+            raise ClaimLimit()
+
+    def _claim_limit_stop(self, counts, writer=None, handle=None, uid=None, started=None) -> None:
+        self._step("Hết lượt nhận tuần này, dừng", headline=True)
+        self.log("Đã hết lượt nhận trong tuần. Dừng.")
+        if self._claimed and writer is not None and uid is not None and started is not None:
+            seconds = time.time() - started
+            counts["da_nhan_qua"] += 1
+            gained = self._gift_pinball
+            note = "đã nhận quà, sau đó hết lượt trong tuần"
+            writer.writerow([uid, LABELS["da_nhan_qua"], f"{seconds:.1f}", "" if gained is None else gained, note])
+            handle.flush()
+            self._log_note(f"{LABELS['da_nhan_qua']} ({seconds:.1f}s). {note}")
+            return
+        counts["het_luot"] += 1
+        if writer is None or uid is None or started is None:
+            return
+        seconds = time.time() - started
+        note = "hết lượt nhận trong tuần"
+        writer.writerow([uid, LABELS["het_luot"], f"{seconds:.1f}", "", note])
+        handle.flush()
+        self._log_note(f"{LABELS['het_luot']} ({seconds:.1f}s). {note}")
 
     def _pause(self, low: float, high: float) -> None:
         end = time.time() + random.uniform(low, high)
