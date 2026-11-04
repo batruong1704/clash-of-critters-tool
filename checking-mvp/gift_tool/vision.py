@@ -18,6 +18,8 @@ SPECS = {
     "search": {"threshold": 0.72, "screen_w": 559, "color": False},
     "results": {"threshold": 0.80, "screen_w": 560, "color": False},
     "add": {"threshold": 0.78, "screen_w": 560, "color": False},
+    # Game cập nhật: nút xanh bên phải hàng kết quả có lúc ghi Apply thay vì Add. Cùng kích cỡ, cùng chỗ.
+    "apply": {"threshold": 0.78, "screen_w": 560, "color": False},
     "visit": {"threshold": 0.80, "screen_w": 720, "color": True},
     "gift": {"threshold": 0.78, "screen_w": 567, "color": True},
     "close": {"threshold": 0.93, "screen_w": 567, "color": False},
@@ -300,6 +302,20 @@ def pinball_reward(screen) -> int | None:
         return None
     gray = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
     white = (gray >= 215).astype(np.uint8) * 255
+    # Vệt sáng ngôi sao hay chạm vào chữ số cuối (60 ra 6). Mở ảnh cắt đứt phần mảnh đó, nét chữ dày nên còn nguyên.
+    opened = cv2.morphologyEx(white, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=2)
+    values = [
+        value
+        for value in (_reward_from_mask(white, height, x1 - x0), _reward_from_mask(opened, height, x1 - x0))
+        if value is not None
+    ]
+    if not values:
+        return None
+    # Đọc hụt chỉ làm mất chữ số. Số nhiều chữ số hơn là số đúng, bằng nhau thì lấy bản không mở.
+    return max(values, key=lambda value: len(str(value)))
+
+
+def _reward_from_mask(white, height: int, width: int) -> int | None:
     count, _, stats, _ = cv2.connectedComponentsWithStats(white, 8)
     min_h = max(16, int(0.030 * height))
     max_h = int(0.050 * height)
@@ -331,7 +347,7 @@ def pinball_reward(screen) -> int | None:
                 groups.append(chain)
                 chain = [item]
         groups.append(chain)
-    center = (x1 - x0) / 2
+    center = width / 2
 
     def rank(group):
         left = group[0][0]
@@ -343,7 +359,7 @@ def pinball_reward(screen) -> int | None:
     completed = _complete_digit_row(white, group)
     candidates = [completed] if completed == group else [completed, group]
     for row in candidates:
-        value = _read_row(white, row, center, (x1 - x0) * 0.22)
+        value = _read_row(white, row, center, width * 0.22)
         if value is not None:
             return value
     return None
@@ -471,6 +487,22 @@ def _level_badge(screen, add: Hit):
     if best is None:
         return None
     x, y, w, h = best
+    # Khung avatar tối (nhất là khung của người cấp cao) dính vào mép trái viên, kéo viên rộng hơn thật
+    # và làm đọc cấp rỗng. Viên đen đặc nên cột nào ít điểm tối hơn nửa cột đặc nhất là phần thừa.
+    counts = (dark[y : y + h, x : x + w] > 0).sum(axis=0)
+    solid = counts >= counts.max() * 0.5
+    run_start, run_len, best_start, best_len = 0, 0, 0, 0
+    for index, flag in enumerate(solid):
+        if flag:
+            if run_len == 0:
+                run_start = index
+            run_len += 1
+            if run_len > best_len:
+                best_start, best_len = run_start, run_len
+        else:
+            run_len = 0
+    if best_len >= BADGE_MIN_W:
+        x, w = x + best_start, best_len
     return gray[y : y + h, x : x + w]
 
 
@@ -485,7 +517,8 @@ def _badge_digits(badge):
     glyphs = []
     for index in range(1, count):
         x, y, w, h, area = stats[index]
-        if h < 8 or area < 8:
+        # Dải sáng ngang sát mép trên hoặc dưới viên (nền lọt qua góc bo) không phải chữ.
+        if h < 8 or area < 8 or w > h * 1.6:
             continue
         glyphs.append((int(x), int(y), int(w), int(h)))
     if not glyphs:

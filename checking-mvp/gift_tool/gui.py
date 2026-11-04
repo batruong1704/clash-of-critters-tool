@@ -646,7 +646,7 @@ class App:
             shot = adb.screenshot()
             hits = []
             lines = [f"Kiểm tra trên {serial}, {shot.shape[1]}x{shot.shape[0]}"]
-            for name in ("search", "add", "visit", "gift", "select", "ok", "close", "missing_id", "friends", "community"):
+            for name in ("search", "add", "apply", "visit", "gift", "select", "ok", "close", "missing_id", "friends", "community"):
                 hit = self.finder.locate(shot, name)
                 threshold = self.finder.templates[name][1]["threshold"]
                 mark = "thấy" if hit.score >= threshold and hit.w else "không"

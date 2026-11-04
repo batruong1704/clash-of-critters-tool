@@ -23,6 +23,8 @@ from gift_tool.vision import (
 )
 
 MAX_GIFTS = 20
+# Nút xanh bên phải hàng kết quả. Game đổi chữ Add thành Apply ở một số hàng.
+ADD_BUTTONS = ("add", "apply")
 MIN_LEVEL = 150
 
 LABELS = {
@@ -66,8 +68,11 @@ GIFT_SCALES = (1.0, 1.05)
 UI_SCALES = (1.0,)
 SEARCH_MIN_X = 0.55
 BACK_TIMEOUT = 6.0
-# Sau OK, nút X đã ở đáy nhà. Bấm trên ảnh hiện tại, rồi chỉ chờ kính lúp.
-LEAVE_TIMEOUT = 3.0
+# Màn Rewards sau OK chạy khoảng 3s, nút X mờ suốt lúc đó. Về tới ô nhập UID mất thêm khoảng 2s.
+LEAVE_TIMEOUT = 10.0
+LEAVE_CLOSE_SCORE = 0.95
+LEAVE_RETAP = 3.5
+LEAVE_MAX_TAPS = 2
 LEAVE_POLL = (0.05, 0.12)
 # Tự tìm đường về ô nhập UID. Mỗi vòng chỉ làm một việc rồi chụp lại.
 NAV_TIMEOUT = 30.0
@@ -282,14 +287,17 @@ class Runner:
         return "da_nhan_qua", note, ready
 
     def _result_add(self, shot, scales=None):
-        """Nút Add của hàng Results, không phải gợi ý Players you may know."""
+        """Nút xanh (Add hoặc Apply) của hàng Results, không phải gợi ý Players you may know."""
         header = self.finder.find(shot, "results", scales=scales)
         if header is None:
             return None
         height = shot.shape[0]
-        return self.finder.find_below(
-            shot, "add", int(header.y), int(header.y + 0.22 * height), scales
-        )
+        best = None
+        for name in ADD_BUTTONS:
+            hit = self.finder.find_below(shot, name, int(header.y), int(header.y + 0.22 * height), scales)
+            if hit is not None and (best is None or hit.score > best.score):
+                best = hit
+        return best
 
     def _wait_search(self, timeout: float):
         """Câu báo ID sai hiện ngay thì trả về, không ngồi hết hạn tìm người chơi."""
@@ -467,30 +475,30 @@ class Runner:
         self._step(f"Pinball {amount}")
 
     def _leave_after_gift(self, shot) -> bool:
-        """OK đã xong. Bấm X một lần trên ảnh đang có, rồi chỉ chờ kính lúp."""
+        """OK đã xong. Chờ màn Rewards chạy hết, bấm X khi X đã sáng, rồi chỉ chờ kính lúp."""
         self._step("Thoát khỏi nhà")
         deadline = time.time() + LEAVE_TIMEOUT
-        tapped = False
+        taps = 0
+        last_tap = 0.0
         while True:
             self._check()
             if self._uid_search(shot, UI_SCALES) is not None:
                 self._step("Đã về ô nhập UID")
                 return True
-            if not tapped:
-                close = self.finder.locate(shot, "close", scales=UI_SCALES)
-                if close.w > 0 and close.score >= HOUSE_CLOSE_SCORE:
-                    self._step("Bấm nút đóng")
-                    self.adb.tap(close.x, close.y)
-                    tapped = True
-                    # Lệnh bấm đã ngốn thời gian. Chụp ngay, không nghỉ thêm một nhịp.
-                    shot = self._shot()
-                    continue
-                if self._on_yard(shot):
-                    self._step("Đang ở sân, không bấm Goldrush", headline=True)
-                    return False
-            elif self._on_yard(shot):
+            if self._on_yard(shot):
                 self._step("Đang ở sân, không bấm Goldrush", headline=True)
                 return False
+            # Màn Rewards sau OK làm mờ cả nút X, bấm lúc đó bị màn nuốt mất. Chỉ bấm khi X đã sáng.
+            close = self.finder.locate(shot, "close", scales=UI_SCALES)
+            bright = close.w > 0 and close.score >= LEAVE_CLOSE_SCORE
+            if bright and taps < LEAVE_MAX_TAPS and time.time() - last_tap >= LEAVE_RETAP:
+                self._step("Bấm nút đóng" if taps == 0 else "Bấm nút đóng lần nữa")
+                self.adb.tap(close.x, close.y)
+                taps += 1
+                last_tap = time.time()
+                # Lệnh bấm đã ngốn thời gian. Chụp ngay, không nghỉ thêm một nhịp.
+                shot = self._shot()
+                continue
             if time.time() >= deadline:
                 break
             self._pause(*LEAVE_POLL)

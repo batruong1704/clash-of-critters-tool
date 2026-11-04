@@ -166,6 +166,7 @@ def main():
     print("pinball ảnh 6 và 7 = 80")
     _assert_pinball_multi_digit(by_prefix["7"][0])
     _assert_leave_after_gift(finder, by_prefix["9"][0], by_prefix["2"][0])
+    _assert_game_update_2026_11(finder, by_prefix["2"][0])
     print("self-test ok")
 
 
@@ -243,6 +244,36 @@ def _assert_leave_after_gift(finder, house, search) -> None:
     if not runner._leave_after_gift(house) or len(adb.taps) != 1:
         raise SystemExit("Nhà còn trên màn cũng chỉ được bấm X một lần")
     print("thoát nhà sau quà: một cú bấm X rồi về ô nhập")
+
+
+def _assert_game_update_2026_11(finder, search) -> None:
+    """Ảnh thật sau bản cập nhật game: nút Apply thay Add, màn Rewards sau OK, vệt sáng chạm chữ số."""
+    folder = RESOURCE / "cap-nhat-2026-11"
+    apply_shot = imread(folder / "ket-qua-nut-apply-lvl-409.png")
+    select = imread(folder / "select-60-co-vet-sang.png")
+    rewards = imread(folder / "rewards-sau-ok-x-bi-mo.png")
+    house = imread(folder / "nha-sau-rewards-x-sang.png")
+
+    runner = Runner(_Shots([apply_shot]), finder, lambda *_args: None, _Stop())
+    found = runner._result_add(apply_shot, (1.0,))
+    if found is None:
+        raise SystemExit("Hàng kết quả ghi Apply phải thấy nút xanh")
+    level = player_level(apply_shot, found)
+    if level != 409:
+        raise SystemExit(f"Cấp 409 sau khung avatar tối phải đọc 409, ra {level}")
+    reward = pinball_reward(select)
+    if reward != 60:
+        raise SystemExit(f"Màn Select có vệt sáng chạm chữ số phải đọc 60, ra {reward}")
+
+    # Màn Rewards làm mờ nút X. Bấm lúc đó bị nuốt, nên chỉ bấm khi X đã sáng.
+    adb = _Shots([rewards, rewards, house, search])
+    runner = Runner(adb, finder, lambda *_args: None, _Stop())
+    if not runner._leave_after_gift(rewards):
+        raise SystemExit("Qua màn Rewards rồi bấm X phải về lại ô nhập")
+    close = finder.locate(house, "close", scales=(1.0,))
+    if len(adb.taps) != 1 or abs(adb.taps[0][0] - close.x) > 8 or abs(adb.taps[0][1] - close.y) > 8:
+        raise SystemExit(f"Chỉ được bấm X khi đã sáng, một lần. Các cú bấm: {adb.taps}")
+    print("bản cập nhật 2026-11: nút Apply, cấp 409, pinball 60, chờ màn Rewards rồi mới bấm X")
 
 
 def _letterbox(image, width: int, height: int, bar: int):
