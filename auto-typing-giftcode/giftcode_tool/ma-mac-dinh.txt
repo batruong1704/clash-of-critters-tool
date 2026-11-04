@@ -1,12 +1,14 @@
-# Một dòng một mã. Dòng bắt đầu bằng # là ghi chú. Xóa hoặc thêm mã ở file này.
-# Phần sau dấu # không được gõ vào game.
-
-welcomegift    # Pinball, Tatari Capsules và quà tân thủ
-weeklygift     # 50 Pinballs + 5 Tatari Capsules
-TATAMOON       # 20 Pinballs, 1800 Candy, 15 Silver Bricks, 3 Gold Bricks, 1 Blue Tatari Capsule, 1 Blue Bento Box, 1 Cookie
-tata1031       # 200 Pinballs, 10 Silver Bricks, 10 Blue Capsules, 1 Glitter Fruit
-openfesta26    # 3000 Candies, 1 Tatari Capsule, 5 Blue Shop Tickets
-openfestb26    # 1000 Candies, Blue Shop Tickets, 1 Cookie
-openfestc      # 1000 Candies, Blue Shop Tickets, 1 Cookie. Cùng quà với dòng dưới
-openfestc1     # Bản còn lại của openfestc. Xóa một trong hai nếu chỉ muốn thử một mã
-welcome2026    # Quà tổng hợp, tân thủ
+ttmxdzb888
+ttmxdzb666
+tatalailou
+happy777
+tatamenaini
+tataheniwan
+tatagzh
+tata666
+openfestb26
+welcome2026
+welcomegift
+weeklygift
+hellotatari
+goonbug

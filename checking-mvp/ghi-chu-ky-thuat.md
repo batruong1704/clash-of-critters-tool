@@ -122,7 +122,7 @@ Việc làm ở bước đầu, gọi lại, không viết thêm:
 
 ## Nhập gift code
 
-Tab **Gift code**. Ảnh từng bước ở `auto-typing-giftcode/resource/`. Code ở `auto-typing-giftcode/giftcode_tool/`. Ô chữ chạy một mã. Nút **Chạy mã mặc định** đọc `giftcode_tool/ma-mac-dinh.txt`, mỗi dòng một mã, ghi chú sau dấu `#`. Mã nhận được thì Back rời màn quà rồi sang mã sau, không bấm Open Another.
+Tab **Gift code**. Ảnh từng bước ở `auto-typing-giftcode/resource/`. Code ở `auto-typing-giftcode/giftcode_tool/`. Ô chữ nhận nhiều mã, mỗi dòng một mã, rồi chạy lần lượt. Nút **Chạy mã mặc định** đọc `giftcode_tool/ma-mac-dinh.txt`, ghi chú sau dấu `#`. Mã nhận được thì Back rời màn quà rồi sang mã sau, không bấm Open Another.
 
 | Thấy | Việc |
 |---|---|

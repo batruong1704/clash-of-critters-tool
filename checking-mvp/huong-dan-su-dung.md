@@ -77,7 +77,7 @@ Nếu tool báo không thấy lại ô nhập UID, nó dừng để khỏi bấm
 
 ## Gift code
 
-Mở tab **Gift code**. Gõ một mã rồi bấm **Nhập mã**, hoặc bấm **Chạy mã mặc định** để gõ lần lượt các mã trong `auto-typing-giftcode/giftcode_tool/ma-mac-dinh.txt`. Thêm hoặc xóa mã bằng cách sửa file đó, mỗi dòng một mã.
+Mở tab **Gift code**. Dán nhiều mã, mỗi dòng một mã, rồi bấm **Nhập mã**. Hoặc bấm **Chạy mã mặc định** để gõ lần lượt các mã trong `auto-typing-giftcode/giftcode_tool/ma-mac-dinh.txt`. Thêm hoặc xóa mã mặc định bằng cách sửa file đó.
 
 Đang ở sảnh hoặc Goldrush đều được. Tool tự mở Bạn bè, vào bánh răng Cài đặt, kéo tới Redemption Code và gõ mã.
 

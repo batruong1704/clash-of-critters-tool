@@ -13,7 +13,7 @@ for _path in (_REPO / "checking-mvp", _REPO / "auto-typing-giftcode"):
 from gift_tool.paths import RESOURCE
 from gift_tool.vision import Finder, imread
 
-from giftcode_tool.codes import load_codes
+from giftcode_tool.codes import LIST_FILE, load_codes, parse_codes
 from giftcode_tool.flow import Runner
 from giftcode_tool.vision import Icons, field_point, reward_bar
 
@@ -202,21 +202,14 @@ def test_rejected_code(icons, finder, shots, centers) -> None:
 
 
 def test_default_file() -> None:
-    codes = load_codes()
-    expect = [
-        "welcomegift",
-        "weeklygift",
-        "TATAMOON",
-        "tata1031",
-        "openfesta26",
-        "openfestb26",
-        "openfestc",
-        "openfestc1",
-        "welcome2026",
-    ]
-    if codes != expect:
-        raise SystemExit(f"File mã mặc định ra {codes}")
-    print("file mã mặc định: đủ 9 mã")
+    good, bad = parse_codes("welcomegift\n\n# ghi chú\nweeklygift  # pinball\nbad-code\ntata2026, TATAMOON")
+    if good != ["welcomegift", "weeklygift", "tata2026", "TATAMOON"] or bad != ["bad-code"]:
+        raise SystemExit(f"Tách nhiều mã sai, ra {good} {bad}")
+    loaded = load_codes()
+    again, _skipped = parse_codes(LIST_FILE.read_text(encoding="utf-8"))
+    if not loaded or loaded != again:
+        raise SystemExit(f"File mã mặc định không khớp parser, ra {loaded}")
+    print(f"nhiều mã: file mặc định có {len(loaded)} mã, ô nhập nhận nhiều dòng")
 
 
 def test_two_codes(icons, finder, shots, centers) -> None:
