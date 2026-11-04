@@ -15,6 +15,7 @@ from gift_tool.vision import (
     avatar_point,
     field_point,
     imwrite,
+    pinball_reward,
     player_level,
     result_signature,
     scene_signature,
@@ -52,6 +53,7 @@ RESULT_STABLE = 0.25
 LEVEL_READS = 4
 LEVEL_RETRY_PAUSE = (0.25, 0.4)
 LEVEL_FAIL_FILE = "khong-doc-duoc-cap.png"
+PINBALL_FAIL_FILE = "khong-doc-duoc-pinball.png"
 VISIT_TIMEOUT = 3.0
 # Tải nhà mất khoảng 3,8s. Hạn này chỉ để chờ nút X, không tính lúc đã đứng trong nhà.
 HOUSE_ENTER_TIMEOUT = 5.0
@@ -64,6 +66,9 @@ GIFT_SCALES = (1.0, 1.05)
 UI_SCALES = (1.0,)
 SEARCH_MIN_X = 0.55
 BACK_TIMEOUT = 6.0
+# Sau OK, nút X đã ở đáy nhà. Bấm trên ảnh hiện tại, rồi chỉ chờ kính lúp.
+LEAVE_TIMEOUT = 3.0
+LEAVE_POLL = (0.05, 0.12)
 # Tự tìm đường về ô nhập UID. Mỗi vòng chỉ làm một việc rồi chụp lại.
 NAV_TIMEOUT = 30.0
 NAV_MAX_ACTIONS = 8
@@ -87,6 +92,9 @@ class Runner:
         self.detail = detail
         self.stop = stop
         self.max_gifts = max_gifts
+        self.pinballs = 0
+        self._gift_pinball = None
+        self._pinball_shot = None
         self._clock = time.time()
 
     def run(self, ids: list[str]) -> dict[str, int]:
@@ -97,13 +105,13 @@ class Runner:
         self._log_note(f"Ghi log: {csv_path}")
         with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["id", "trang_thai", "giay", "ghi_chu"])
+            writer.writerow(["id", "trang_thai", "giay", "pinball", "ghi_chu"])
             self._step("Kiểm tra hướng màn hình")
             shot = self._shot()
             if shot.shape[1] > shot.shape[0]:
                 self._step("Emulator đang ngang", headline=True)
                 self.log("Emulator đang ngang. Hãy xoay dọc, giống ảnh mẫu, rồi chạy lại.")
-                return counts
+                return self._done(counts)
             self._step("Kiểm tra ô nhập UID")
             if not self._open_uid_field(shot):
                 self._step("Không tìm được đường tới ô nhập UID", headline=True)
@@ -111,14 +119,17 @@ class Runner:
                     "Không tự mở được ô nhập UID. Hãy mở tab Add New trong game rồi bấm Bắt đầu. "
                     f"Ảnh màn hình lúc đó: {LOGS / LOST_SCREEN_FILE}"
                 )
-                return counts
+                return self._done(counts)
             for index, uid in enumerate(ids, start=1):
                 self._check()
                 if counts["da_nhan_qua"] >= self.max_gifts:
                     self._step(f"Đủ {self.max_gifts} quà, dừng", headline=True)
                     self.log(f"Đủ {self.max_gifts} quà, dừng.")
                     break
-                self.log(f"[{index}/{len(ids)}] UID {uid} — đã nhận {counts['da_nhan_qua']}/{self.max_gifts}")
+                self.log(
+                    f"[{index}/{len(ids)}] UID {uid} — đã nhận {counts['da_nhan_qua']}/{self.max_gifts}, "
+                    f"pinball {self.pinballs}"
+                )
                 self._step(f"UID {uid} ({index}/{len(ids)})", headline=True)
                 started = time.time()
                 self._clock = started
@@ -132,9 +143,11 @@ class Runner:
                     status, note, ready = "loi_timeout", str(exc), False
                 seconds = time.time() - started
                 counts[status] += 1
-                writer.writerow([uid, LABELS[status], f"{seconds:.1f}", note])
+                gained = self._gift_pinball if status == "da_nhan_qua" else None
+                writer.writerow([uid, LABELS[status], f"{seconds:.1f}", "" if gained is None else gained, note])
                 handle.flush()
-                self._log_note(f"{LABELS[status]} ({seconds:.1f}s). {note}")
+                total = f" Tổng pinball {self.pinballs}." if status == "da_nhan_qua" else ""
+                self._log_note(f"{LABELS[status]} ({seconds:.1f}s). {note}{total}")
                 if not ready:
                     self._step("Mất ô nhập UID, tự mở lại")
                     ready = self._open_uid_field()
@@ -143,9 +156,11 @@ class Runner:
                     break
                 self._pause(*BETWEEN_IDS)
         self._summary(counts)
-        return counts
+        return self._done(counts)
 
     def process_one(self, uid: str) -> tuple[str, str, bool]:
+        self._gift_pinball = None
+        self._pinball_shot = None
         self._step("Tìm ô nhập UID")
         shot = self._shot()
         search = self._uid_search(shot)
@@ -235,24 +250,36 @@ class Runner:
             self.adb.tap(gift.x, gift.y)
             self._pause(0.25, 0.35)
         self._step("Chờ nút Select")
-        if not self._wait_tap("select", timeout=3):
+        found, _after = self._wait_tap("select", timeout=3)
+        if not found:
             gift = self.finder.find(self._shot(), "gift")
             if gift is not None:
                 self._step("Chưa thấy Select, bấm lại hộp quà")
                 self.adb.tap(gift.x, gift.y)
             self._step("Chờ nút Select lần nữa")
-            if not self._wait_tap("select", timeout=2):
+            found, _after = self._wait_tap("select", timeout=2)
+            if not found:
                 self._step("Không thấy nút Select", headline=True)
                 ready = self._back_to_search()
                 return "loi_timeout", "đã thấy hộp quà nhưng không thấy nút Select", ready
         self._step("Chờ nút OK")
-        if not self._wait_tap("ok", timeout=3):
+        found, after = self._wait_tap("ok", timeout=3)
+        if not found:
             self._step("Không thấy nút OK", headline=True)
             ready = self._back_to_search()
             return "loi_timeout", "đã bấm Select nhưng không thấy nút OK", ready
-        self._step("Đã bấm Select và OK", headline=True)
-        ready = self._back_to_search()
-        return "da_nhan_qua", "đã bấm Select và OK", ready
+        amount = self._gift_pinball
+        if amount is None:
+            if self._pinball_shot is not None:
+                imwrite(LOGS / PINBALL_FAIL_FILE, self._pinball_shot)
+            note = "đã bấm Select và OK, không đọc được pinball"
+            self._step("Không đọc được pinball", headline=True)
+        else:
+            self.pinballs += amount
+            note = f"đã bấm Select và OK, {amount} pinball"
+            self._step(f"Đã bấm Select và OK, {amount} pinball", headline=True)
+        ready = self._leave_after_gift(after)
+        return "da_nhan_qua", note, ready
 
     def _result_add(self, shot, scales=None):
         """Nút Add của hàng Results, không phải gợi ý Players you may know."""
@@ -399,25 +426,78 @@ class Runner:
         self._step("Hết nhịp đuổi, không thấy hộp", headline=True)
         return "no_gift"
 
-    def _wait_tap(self, name: str, timeout: float) -> bool:
+    def _wait_tap(self, name: str, timeout: float):
+        """Trả (đã xong, ảnh cuối). Ảnh cuối là khung nút vừa biến mất, để bấm X ngay."""
         deadline = time.time() + timeout
         taps = 0
+        shot = None
         while time.time() < deadline:
             self._check()
             shot = self._shot()
             hit = self.finder.find(shot, name)
             if hit is not None and taps < 2:
+                self._notice_pinball(shot)
                 self._step(f"Bấm nút {BUTTON_NAMES.get(name, name)}")
                 self.adb.tap(hit.x, hit.y)
                 taps += 1
                 self._pause(0.28, 0.5)
-                if self.finder.find(self._shot(), name) is None:
-                    return True
+                shot = self._shot()
+                if self.finder.find(shot, name) is None:
+                    return True, shot
                 continue
             if hit is None and taps > 0:
-                return True
+                return True, shot
             self._pause(0.15, 0.28)
-        return False
+        if shot is None:
+            shot = self._shot()
+        return False, shot
+
+    def _notice_pinball(self, shot) -> None:
+        """Đọc một lần trên hộp quà. Màn Select và màn OK cùng một số, không cộng hai lần."""
+        self._pinball_shot = shot
+        if self._gift_pinball is not None:
+            return
+        amount = pinball_reward(shot)
+        if amount is None:
+            return
+        self._gift_pinball = amount
+        self._step(f"Pinball {amount}")
+
+    def _leave_after_gift(self, shot) -> bool:
+        """OK đã xong. Bấm X một lần trên ảnh đang có, rồi chỉ chờ kính lúp."""
+        self._step("Thoát khỏi nhà")
+        deadline = time.time() + LEAVE_TIMEOUT
+        tapped = False
+        while True:
+            self._check()
+            if self._uid_search(shot, UI_SCALES) is not None:
+                self._step("Đã về ô nhập UID")
+                return True
+            if not tapped:
+                close = self.finder.locate(shot, "close", scales=UI_SCALES)
+                if close.w > 0 and close.score >= HOUSE_CLOSE_SCORE:
+                    self._step("Bấm nút đóng")
+                    self.adb.tap(close.x, close.y)
+                    tapped = True
+                    # Lệnh bấm đã ngốn thời gian. Chụp ngay, không nghỉ thêm một nhịp.
+                    shot = self._shot()
+                    continue
+                if self._on_yard(shot):
+                    self._step("Đang ở sân, không bấm Goldrush", headline=True)
+                    return False
+            elif self._on_yard(shot):
+                self._step("Đang ở sân, không bấm Goldrush", headline=True)
+                return False
+            if time.time() >= deadline:
+                break
+            self._pause(*LEAVE_POLL)
+            shot = self._shot()
+        ready = self._uid_search(shot, UI_SCALES) is not None
+        if ready:
+            self._step("Đã về ô nhập UID")
+        else:
+            self._step("Chưa thấy lại ô nhập UID", headline=True)
+        return ready
 
     def _back_to_search(self) -> bool:
         """Chỉ bấm đóng một lần. Cú thứ hai rơi trúng nút Goldrush giữa đáy sân."""
@@ -596,5 +676,9 @@ class Runner:
 
     def _summary(self, counts: dict[str, int]) -> None:
         parts = [f"{LABELS[key]}: {counts[key]}" for key in LABELS]
-        self.log("Tổng kết — " + ", ".join(parts))
+        self.log("Tổng kết — " + ", ".join(parts) + f". Pinball: {self.pinballs}")
+
+    def _done(self, counts: dict[str, int]) -> dict[str, int]:
+        counts["pinball"] = self.pinballs
+        return counts
 

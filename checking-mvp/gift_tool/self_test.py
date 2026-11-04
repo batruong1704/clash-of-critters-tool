@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 
+from gift_tool.flow import Runner
 from gift_tool.paths import RESOURCE, ROOT, note_use
 import numpy as np
 
@@ -17,6 +18,7 @@ from gift_tool.vision import (
     field_point,
     imread,
     imwrite,
+    pinball_reward,
     player_level,
     result_signature,
     signature_diff,
@@ -153,7 +155,62 @@ def main():
     if gift9 is not None:
         raise SystemExit(f"Ảnh 9 không được nhận nhầm hộp quà, điểm {gift9.score:.2f}")
     print(f"gift ảnh 5 = {gift5.score:.2f} tại ({gift5.x},{gift5.y}); ảnh 9 không có quà")
+    reward6 = pinball_reward(by_prefix["6"][0])
+    reward7 = pinball_reward(by_prefix["7"][0])
+    if reward6 != 80 or reward7 != 80:
+        raise SystemExit(f"Hộp quà phải đọc 80 pinball, ra ảnh 6 = {reward6}, ảnh 7 = {reward7}")
+    for key in ("2", "3", "5", "9"):
+        got = pinball_reward(by_prefix[key][0])
+        if got is not None:
+            raise SystemExit(f"Ảnh {key} không có hộp quà, không được đọc pinball {got}")
+    print("pinball ảnh 6 và 7 = 80")
+    _assert_leave_after_gift(finder, by_prefix["9"][0], by_prefix["2"][0])
     print("self-test ok")
+
+
+class _Stop:
+    def is_set(self) -> bool:
+        return False
+
+
+class _Shots:
+    def __init__(self, frames):
+        self.frames = frames
+        self.index = 0
+        self.taps: list[tuple[int, int]] = []
+
+    def screenshot(self):
+        shot = self.frames[min(self.index, len(self.frames) - 1)]
+        self.index += 1
+        return shot
+
+    def tap(self, x: int, y: int) -> None:
+        self.taps.append((int(x), int(y)))
+
+
+def _assert_leave_after_gift(finder, house, search) -> None:
+    """Sau OK chỉ bấm X một lần trên ảnh nhà, rồi nhận kính lúp. Không bấm lần hai."""
+    close = finder.locate(house, "close", scales=(1.0,))
+    if close.w == 0 or close.score < 0.80:
+        raise SystemExit("Ảnh nhà sau quà phải thấy nút X")
+    if finder.find(search, "search") is None:
+        raise SystemExit("Ảnh ô nhập phải thấy kính lúp")
+
+    adb = _Shots([search])
+    runner = Runner(adb, finder, lambda *_args: None, _Stop())
+    if not runner._leave_after_gift(house):
+        raise SystemExit("Bấm X xong phải thấy lại ô nhập")
+    if len(adb.taps) != 1:
+        raise SystemExit(f"Chỉ được bấm X một lần, đã bấm {len(adb.taps)}")
+    x, y = adb.taps[0]
+    if abs(x - close.x) > 8 or abs(y - close.y) > 8:
+        raise SystemExit(f"Bấm X lệch ({x},{y}) so với ({close.x},{close.y})")
+
+    adb = _Shots([house, search])
+    runner = Runner(adb, finder, lambda *_args: None, _Stop())
+    if not runner._leave_after_gift(house) or len(adb.taps) != 1:
+        raise SystemExit("Nhà còn trên màn cũng chỉ được bấm X một lần")
+    print("thoát nhà sau quà: một cú bấm X rồi về ô nhập")
 
 
 def _letterbox(image, width: int, height: int, bar: int):

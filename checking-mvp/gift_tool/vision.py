@@ -289,6 +289,62 @@ def _flatten_frame(image, aspect: float):
     return cv2.resize(image, (width, target), interpolation=cv2.INTER_AREA)
 
 
+def pinball_reward(screen) -> int | None:
+    """Số pinball trên hộp quà, chữ trắng giữa ngôi sao. Không đọc dòng Best Luck phía dưới."""
+    height, width = screen.shape[:2]
+    y0 = int(0.42 * height)
+    y1 = int(0.56 * height)
+    x0 = int(0.22 * width)
+    x1 = int(0.78 * width)
+    if y1 - y0 < 8 or x1 - x0 < 8:
+        return None
+    gray = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    white = (gray >= 215).astype(np.uint8) * 255
+    count, _, stats, _ = cv2.connectedComponentsWithStats(white, 8)
+    min_h = max(16, int(0.030 * height))
+    max_h = int(0.050 * height)
+    glyphs = []
+    for index in range(1, count):
+        x, y, w, h, area = [int(value) for value in stats[index]]
+        if h < min_h or h > max_h or w < h * 0.22 or w > h * 1.1 or area < 30:
+            continue
+        glyphs.append((x, y, w, h))
+    if not glyphs:
+        return None
+    glyphs.sort()
+    groups = [[glyphs[0]]]
+    for glyph in glyphs[1:]:
+        prev = groups[-1][-1]
+        gap = glyph[0] - (prev[0] + prev[2])
+        same_row = abs((glyph[1] + glyph[3] / 2) - (prev[1] + prev[3] / 2)) <= prev[3] * 0.35
+        if gap <= prev[3] * 0.7 and same_row:
+            groups[-1].append(glyph)
+        else:
+            groups.append([glyph])
+    center = (x1 - x0) / 2
+
+    def rank(group):
+        left = group[0][0]
+        right = group[-1][0] + group[-1][2]
+        return (len(group), -abs((left + right) / 2 - center))
+
+    group = max(groups, key=rank)
+    left = group[0][0]
+    right = group[-1][0] + group[-1][2]
+    if abs((left + right) / 2 - center) > (x1 - x0) * 0.22 or len(group) > 4:
+        return None
+    digits = []
+    for x, y, w, h in group:
+        digit = _read_digit(white[y : y + h, x : x + w])
+        if digit is None:
+            return None
+        digits.append(digit)
+    value = int("".join(digits))
+    if value <= 0:
+        return None
+    return value
+
+
 def player_level(screen, add: Hit) -> int | None:
     """Cấp trên nhãn Lvl của hàng Results. Không đọc cấp thú ở phía trên màn hình."""
     badge = _level_badge(screen, add)

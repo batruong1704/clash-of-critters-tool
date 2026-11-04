@@ -595,7 +595,7 @@ class App:
             runner = Runner(adb, self.finder, log, self.stop, self.write_detail)
             counts = runner.run(ids)
             summary = (
-                f"Xong. Quà {counts['da_nhan_qua']}/{MAX_GIFTS}. "
+                f"Xong. Quà {counts['da_nhan_qua']}/{MAX_GIFTS}, pinball {counts.get('pinball', 0)}. "
                 + ", ".join(f"{LABELS[key]} {counts[key]}" for key in LABELS)
             )
             self.root.after(0, lambda text=summary: self.progress.set(text))
