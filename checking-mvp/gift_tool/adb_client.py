@@ -249,6 +249,11 @@ class AdbClient:
             raise ValueError("UID chỉ gồm chữ số.")
         self._run([self.adb, "-s", self.serial, "shell", "input", "text", text])
 
+    def input_code(self, text: str) -> None:
+        if not text or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" for ch in text):
+            raise ValueError("Mã chỉ gồm chữ và số.")
+        self._run([self.adb, "-s", self.serial, "shell", "input", "text", text])
+
     def clear_text(self, count: int = CLEAR_COUNT) -> None:
         codes = [KEY_MOVE_END, *[KEY_DELETE] * count]
         self._run([self.adb, "-s", self.serial, "shell", "input", "keyevent", *codes])
