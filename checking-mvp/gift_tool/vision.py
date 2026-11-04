@@ -312,15 +312,25 @@ def pinball_reward(screen) -> int | None:
     if not glyphs:
         return None
     glyphs.sort()
-    groups = [[glyphs[0]]]
-    for glyph in glyphs[1:]:
-        prev = groups[-1][-1]
-        gap = glyph[0] - (prev[0] + prev[2])
-        same_row = abs((glyph[1] + glyph[3] / 2) - (prev[1] + prev[3] / 2)) <= prev[3] * 0.35
-        if gap <= prev[3] * 0.7 and same_row:
-            groups[-1].append(glyph)
-        else:
-            groups.append([glyph])
+    # Gom theo hàng trước rồi mới xếp theo x. Vệt sáng của quả bóng nằm lẫn giữa hai chữ số
+    # (cùng khoảng x, khác hàng) mà xếp theo x trước thì cắt đôi số, chỉ còn một chữ số.
+    groups = []
+    for anchor in glyphs:
+        a_mid = anchor[1] + anchor[3] / 2
+        row = [
+            item
+            for item in glyphs
+            if abs(item[1] + item[3] / 2 - a_mid) <= anchor[3] * 0.2 and abs(item[3] - anchor[3]) <= anchor[3] * 0.2
+        ]
+        chain = [row[0]]
+        for item in row[1:]:
+            prev = chain[-1]
+            if item[0] - (prev[0] + prev[2]) <= prev[3] * 0.7:
+                chain.append(item)
+            else:
+                groups.append(chain)
+                chain = [item]
+        groups.append(chain)
     center = (x1 - x0) / 2
 
     def rank(group):
@@ -329,13 +339,28 @@ def pinball_reward(screen) -> int | None:
         return (len(group), -abs((left + right) / 2 - center))
 
     group = max(groups, key=rank)
-    left = group[0][0]
-    right = group[-1][0] + group[-1][2]
-    if abs((left + right) / 2 - center) > (x1 - x0) * 0.22 or len(group) > 4:
+    # Thử hàng chữ đầy đủ trước. Nền sáng dính vào làm đọc hỏng thì lùi về nhóm ban đầu.
+    completed = _complete_digit_row(white, group)
+    candidates = [completed] if completed == group else [completed, group]
+    for row in candidates:
+        value = _read_row(white, row, center, (x1 - x0) * 0.22)
+        if value is not None:
+            return value
+    return None
+
+
+def _read_row(white, row, center: float, tolerance: float) -> int | None:
+    left = row[0][0]
+    right = row[-1][0] + row[-1][2]
+    if abs((left + right) / 2 - center) > tolerance or len(row) > 4:
         return None
     digits = []
-    for x, y, w, h in group:
-        digit = _read_digit(white[y : y + h, x : x + w])
+    for x, y, w, h in row:
+        glyph = white[y : y + h, x : x + w]
+        used = np.where(glyph.any(axis=0))[0]
+        if len(used) == 0:
+            return None
+        digit = _read_digit(glyph[:, used[0] : used[-1] + 1])
         if digit is None:
             return None
         digits.append(digit)
@@ -343,6 +368,53 @@ def pinball_reward(screen) -> int | None:
     if value <= 0:
         return None
     return value
+
+
+def _complete_digit_row(white, group):
+    """Gom đủ các chữ số cùng hàng với nhóm đã chọn.
+
+    Chữ trắng hay dính viền sáng của quả bóng hoặc chạm nhau (như 55), nên bị loại vì quá cao
+    hoặc quá rộng, và số 55 chỉ còn lại một chữ 5. Cắt đúng dải hàng chữ rồi tách lại.
+    """
+    top = min(item[1] for item in group)
+    bottom = max(item[1] + item[3] for item in group)
+    glyph_h = bottom - top
+    if glyph_h < 8:
+        return group
+    band = white[top:bottom, :].copy()
+    count, _, stats, _ = cv2.connectedComponentsWithStats(band, 8)
+    pieces = []
+    for index in range(1, count):
+        x, y, w, h, area = [int(value) for value in stats[index]]
+        if h < glyph_h * 0.8 or area < 30 or w < glyph_h * 0.22:
+            continue
+        if w <= glyph_h * 1.1:
+            pieces.append((x, top + y, w, h))
+            continue
+        # Hai chữ dính nhau rộng khoảng 1.4 lần chiều cao. Rộng hơn là nền sáng quanh chữ, không tách.
+        if w > glyph_h * 1.7:
+            continue
+        cols = (band[y : y + h, x : x + w] > 0).sum(axis=0)
+        lo = int(w * 0.3)
+        hi = max(lo + 1, int(w * 0.7))
+        cut = lo + int(np.argmin(cols[lo:hi]))
+        pieces.append((x, top + y, cut, h))
+        pieces.append((x + cut, top + y, w - cut, h))
+    if not pieces:
+        return group
+    pieces.sort()
+    anchor = group[0]
+    chain = [[pieces[0]]]
+    for piece in pieces[1:]:
+        prev = chain[-1][-1]
+        if piece[0] - (prev[0] + prev[2]) <= glyph_h * 0.7:
+            chain[-1].append(piece)
+        else:
+            chain.append([piece])
+    for row in chain:
+        if any(abs(item[0] - anchor[0]) <= anchor[2] and abs(item[1] - anchor[1]) <= glyph_h for item in row):
+            return row if len(row) >= len(group) else group
+    return group
 
 
 def player_level(screen, add: Hit) -> int | None:

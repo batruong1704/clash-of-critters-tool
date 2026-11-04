@@ -453,12 +453,15 @@ class Runner:
         return False, shot
 
     def _notice_pinball(self, shot) -> None:
-        """Đọc một lần trên hộp quà. Màn Select và màn OK cùng một số, không cộng hai lần."""
+        """Đọc trên hộp quà. Màn Select và màn OK cùng một số, không cộng hai lần.
+
+        Đọc hụt chữ số chỉ làm số nhỏ đi (55 thành 5), nên mỗi lần đọc lại giữ số lớn nhất.
+        """
         self._pinball_shot = shot
-        if self._gift_pinball is not None:
-            return
         amount = pinball_reward(shot)
         if amount is None:
+            return
+        if self._gift_pinball is not None and amount <= self._gift_pinball:
             return
         self._gift_pinball = amount
         self._step(f"Pinball {amount}")

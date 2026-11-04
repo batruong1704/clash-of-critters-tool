@@ -164,8 +164,40 @@ def main():
         if got is not None:
             raise SystemExit(f"Ảnh {key} không có hộp quà, không được đọc pinball {got}")
     print("pinball ảnh 6 và 7 = 80")
+    _assert_pinball_multi_digit(by_prefix["7"][0])
     _assert_leave_after_gift(finder, by_prefix["9"][0], by_prefix["2"][0])
     print("self-test ok")
+
+
+def _assert_pinball_multi_digit(shot) -> None:
+    """Ghép chữ số 8 và 0 thật từ ảnh 7 thành số nhiều chữ, chèn vệt sáng giống quả bóng lẫn giữa các chữ.
+
+    Xếp theo x trước thì vệt sáng cắt đôi số và mất chữ số đuôi (808 ra 8, 80 ra rỗng).
+    """
+    import cv2
+    import numpy as np
+
+    height, width = shot.shape[:2]
+    left = int(0.22 * width)
+    top = int(0.42 * height)
+    x8, x0, y = left + 127, left + 158, top + 47
+    glyph8 = shot[y : y + 45, x8 : x8 + 33].copy()
+    glyph0 = shot[y : y + 45, x0 : x0 + 33].copy()
+    for text, expected in (("88", 88), ("808", 808), ("880", 880), ("80", 80)):
+        start = x8 - (len(text) - 2) * 15
+        for offset in (None, 10, 24, 40, 55):
+            image = shot.copy()
+            image[y : y + 45, left + 80 : left + 300] = np.tile(shot[y : y + 45, left + 60 : left + 61], (1, 220, 1))
+            for index, char in enumerate(text):
+                xx = start + index * 31
+                image[y : y + 45, xx : xx + 33] = glyph8 if char == "8" else glyph0
+            if offset is not None:
+                cv2.circle(image, (start + offset, y - 28), 24, (120, 60, 60), -1)
+                cv2.circle(image, (start + offset, y - 28), 19, (255, 255, 255), -1)
+            got = pinball_reward(image)
+            if got != expected:
+                raise SystemExit(f"Số {expected} có vệt sáng lệch {offset} phải đọc {expected}, ra {got}")
+    print("pinball nhiều chữ số 88, 808, 880, 80 đọc đủ, kể cả khi có vệt sáng lẫn giữa")
 
 
 class _Stop:
