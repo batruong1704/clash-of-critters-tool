@@ -53,11 +53,13 @@ LEVEL_READS = 4
 LEVEL_RETRY_PAUSE = (0.25, 0.4)
 LEVEL_FAIL_FILE = "khong-doc-duoc-cap.png"
 VISIT_TIMEOUT = 3.0
-HOUSE_ENTER_TIMEOUT = 4.0
+# Tải nhà mất khoảng 3,8s. Hạn này chỉ để chờ nút X, không tính lúc đã đứng trong nhà.
+HOUSE_ENTER_TIMEOUT = 5.0
 HOUSE_CLOSE_SCORE = 0.80
-NO_GIFT_PAUSE = (0.45, 0.6)
+# Sau khi thấy nút X vẫn nhìn sân. Một nhịp 0,5s dễ bấm X trước khi camera chạy tới hộp.
+HOUSE_LOOK = 2.5
 PAN_DIFF = 15.0
-PAN_FOLLOW = 2.0
+PAN_FOLLOW = 3.5
 GIFT_SCALES = (1.0, 1.05)
 UI_SCALES = (1.0,)
 SEARCH_MIN_X = 0.55
@@ -332,12 +334,20 @@ class Runner:
         return shot if shot is not None else self._shot(), None
 
     def _wait_house(self) -> str:
-        """Không có quà thì sân đứng yên: nhìn thêm một nhịp rồi thoát, không chờ hết hạn vào nhà."""
-        deadline = time.time() + HOUSE_ENTER_TIMEOUT
+        """Vào nhà xong vẫn nhìn sân. Hết giờ tải nhà không được cắt ngắn lúc đang tìm hộp."""
+        enter_deadline = time.time() + HOUSE_ENTER_TIMEOUT
+        look_deadline = None
         visit_taps = 0
         anchor = None
-        while time.time() < deadline:
+        while True:
             self._check()
+            now = time.time()
+            if look_deadline is None and now >= enter_deadline:
+                self._step("Chưa vào được nhà", headline=True)
+                return "timeout"
+            if look_deadline is not None and now >= look_deadline:
+                self._step("Sân đứng yên, không có quà", headline=True)
+                return "no_gift"
             shot = self._shot()
             if self._seen_gift(shot):
                 return "gift"
@@ -354,18 +364,13 @@ class Runner:
                     continue
                 self._step("Đã vào nhà, nhìn sân")
                 anchor = scene_signature(shot)
-                self._pause(*NO_GIFT_PAUSE)
+                look_deadline = time.time() + HOUSE_LOOK
+                self._pause(*POLL_PAUSE)
                 continue
-            # Camera không trượt sau nhịp ngắn thì không có hộp. Critter nhấp không đủ độ lệch này.
+            # Camera không trượt suốt lúc nhìn sân thì không có hộp. Critter nhấp không đủ độ lệch này.
             if signature_diff(anchor, scene_signature(shot)) >= PAN_DIFF:
                 return self._follow_gift()
-            self._step("Sân đứng yên, không có quà", headline=True)
-            return "no_gift"
-        if anchor is None:
-            self._step("Chưa vào được nhà", headline=True)
-            return "timeout"
-        self._step("Hết giờ trong nhà, không thấy hộp", headline=True)
-        return "no_gift"
+            self._pause(*POLL_PAUSE)
 
     def _seen_gift(self, shot) -> bool:
         gift = self.finder.find(shot, "gift", scales=GIFT_SCALES)
