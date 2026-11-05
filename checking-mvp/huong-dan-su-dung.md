@@ -75,14 +75,6 @@ Cuối lượt, log có dòng tổng bốn trạng thái trên.
 
 Nếu tool báo không thấy lại ô nhập UID, nó dừng để khỏi bấm nhầm. Mở lại tab Add New, rồi chạy tiếp những UID chưa xử lý.
 
-## Gift code
-
-Mở tab **Gift code**. Dán nhiều mã, mỗi dòng một mã, rồi bấm **Nhập mã**. Hoặc bấm **Chạy mã mặc định** để gõ lần lượt các mã trong `auto-typing-giftcode/giftcode_tool/ma-mac-dinh.txt`. Thêm hoặc xóa mã mặc định bằng cách sửa file đó.
-
-Đang ở sảnh hoặc Goldrush đều được. Tool tự mở Bạn bè, vào bánh răng Cài đặt, kéo tới Redemption Code và gõ mã.
-
-Mã đúng thì chờ tới khi hiện **Open Another** hoặc **Continue**. Không bấm hai nút đó. Danh sách mặc định thì rời màn quà rồi sang mã sau. Mã sai hoặc đã dùng thì hộp thoại đứng yên, tool báo không được nhận và sang mã kế nếu đang chạy danh sách.
-
 ## Khi sửa xong code hoặc ảnh mẫu
 
 Tắt hẳn cửa sổ tool rồi mở lại `run.bat`. Cửa sổ đang mở vẫn giữ ảnh mẫu cũ trong bộ nhớ.

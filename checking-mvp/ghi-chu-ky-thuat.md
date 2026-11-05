@@ -95,50 +95,6 @@ Ba điều dễ sai khi sửa:
 
 Ảnh chụp ADB thật là **720×1280**. Ảnh trong `resource/` rộng khoảng 560px, nên mỗi mẫu có `screen_w` riêng.
 
-## Điểm khởi đầu: sảnh và Goldrush
-
-Lúc bấm chạy, game hầu như đang đứng ở một trong hai màn này. Chức năng mới bắt đầu bằng cách hỏi đang ở màn nào, rồi gọi bước đã có. Đừng viết lại cách nhận màn và đừng cắt mẫu mới, trừ khi giao diện hai màn này đổi.
-
-Tab Pinball nằm cùng nhóm với sân. Thanh đáy đổi nút Pinball thành Camp, icon Bạn bè cùng kiểu, cùng chỗ. Không có nhãn màn thứ ba cho roll pinball.
-
-| Đang đứng | Dấu hiệu | Code đang dùng |
-|---|---|---|
-| Sảnh (Camp hoặc tab Pinball) | `friends.png` bên phải. Nút mode Goldrush ở đáy. Không có nút X đáy | Tool quà: `_nav_step` thấy `friends`. `_on_yard` thấy mẫu `goldrush`. Tool rally: `_scene` trả `"camp"` |
-| Trong bản đồ Goldrush | Nút X đáy, kính lúp bên trái. Tool rally còn icon chat | Tool quà: `_nav_step` không thấy `friends` hay `community` mà thấy X, log ghi *Goldrush hoặc trong nhà*. Tool rally: `_scene` trả `"map"` |
-
-Mẫu `goldrush.png` là **nút mode trên thanh đáy sân**, không phải ảnh bản đồ. Thấy mẫu này là đang ở sảnh. Trong bản đồ mẫu này chỉ khớp khoảng 0.32. Kính lúp Goldrush nằm bên trái (`_uid_search` chỉ nhận kính lúp từ 55% bề ngang sang phải; rally dùng `MAP_SEARCH_X = 0.40`).
-
-Ảnh đối chiếu, đã có trong `resource/`:
-
-- `0. màn hình ở sản.png` — sân. `self_test` của tool quà bắt buộc thấy `friends`.
-- `1. giao diện chính tab pinball.png` — cùng nhóm sảnh. `self_test` của rally bắt buộc thấy nút Goldrush ở thanh dưới.
-- `0. màn hình chế độ goldrush.png` — bản đồ. Phải thấy nút X, không được thấy `friends`.
-
-Việc làm ở bước đầu, gọi lại, không viết thêm:
-
-- **Tool quà**, cần về ô nhập UID: `_open_uid_field` → `_nav_step`. Sảnh thì bấm icon Bạn bè. Goldrush thì bấm X một lần rồi `_wait_close_gone`. Đang ở sảnh thì `_on_yard` chặn cú bấm X, vì giữa đáy sân là nút Goldrush.
-- **Tool rally**, cần vào chat: `_act`. `"camp"` thì `_enter_goldrush` bấm nút mode, chờ hoạt cảnh `GOLDRUSH_ANIM` (2 giây) và không bấm lại trong `GOLDRUSH_LOAD` (10 giây). `"map"` thì bấm icon chat. Màn lạ mà thanh dưới vẫn còn nút Goldrush thì `home_goldrush` đưa vào lại, không bấm X.
-- **Nhập gift code**, cần tới hộp Redeem Rewards: `auto-typing-giftcode/giftcode_tool/flow.py`. Cùng hai điểm vào. Sảnh thì bấm Bạn bè. Goldrush thì bấm X, chờ X biến mất, rồi bấm Bạn bè. Không viết lại đoạn này.
-
-## Nhập gift code
-
-Tab **Gift code**. Ảnh từng bước ở `auto-typing-giftcode/resource/`. Code ở `auto-typing-giftcode/giftcode_tool/`. Ô chữ nhận nhiều mã, mỗi dòng một mã, rồi chạy lần lượt. Nút **Chạy mã mặc định** đọc `giftcode_tool/ma-mac-dinh.txt`, ghi chú sau dấu `#`. Mã nhận được thì Back rời màn quà rồi sang mã sau, không bấm Open Another.
-
-| Thấy | Việc |
-|---|---|
-| Nút X, không có Bạn bè | Goldrush hoặc trong nhà. Bấm X một lần, chờ X biến mất |
-| Icon Bạn bè | Sảnh, kể cả tab Pinball. Bấm Bạn bè |
-| Bánh răng trên panel hồ sơ (`gear.png`, không lấy chấm đỏ) | Bấm, mở Settings |
-| Chữ Settings, chưa thấy hàng Redemption Code | Kéo danh sách lên |
-| Hàng Redemption Code | Bấm |
-| Nút Confirm | Gõ mã vào ô phía trên, bấm Confirm |
-| Thanh xanh đáy màn | Open Another hoặc Continue. Dừng, không bấm |
-| Confirm còn sau khoảng 8 giây | Mã không được nhận. Hộp thoại đứng yên, như ảnh 7 |
-
-Mẫu riêng trong `auto-typing-giftcode/giftcode_tool/templates/`: `gear.png`, `settings.png`, `redemption.png`, `confirm.png`. Không đưa vào `templates/` chung. So trên cả khung, không cắt viền đen: hộp Settings và hộp nhập mã có nền tối hai bên, cắt viền làm lệch tỉ lệ. Ngưỡng 0.80.
-
-`py -3 auto-typing-giftcode/giftcode_tool/self_test.py` chạy trên ảnh có sẵn. Từ Goldrush phải đi X → Bạn bè → bánh răng → kéo → gõ, rồi dừng khi có thanh quà. Đang ở Settings thì không mò lại từ đầu.
-
 ## Tự mở ô nhập UID
 
 Hàm `_open_uid_field` trong `gift_tool/flow.py`. Chạy ở đầu lượt, và mỗi khi mất ô nhập giữa chừng. Mỗi vòng chụp một ảnh, làm **đúng một việc** theo thứ tự dưới đây, rồi chụp lại:

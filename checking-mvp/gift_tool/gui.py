@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -12,13 +11,6 @@ from gift_tool.adb_client import AdbClient
 from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS, Runner
 from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
-
-_CODE_ROOT = Path(__file__).resolve().parents[2] / "auto-typing-giftcode"
-if str(_CODE_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CODE_ROOT))
-
-from giftcode_tool.codes import load_codes, parse_codes
-from giftcode_tool.flow import Runner as CodeRunner
 from rally_tool.flow import Runner as RallyRunner
 
 WINDOW_WIDTH = 840
@@ -52,10 +44,9 @@ LOG_OK = "#0e7a3d"
 LOG_WARN = "#8a5a00"
 LOG_BAD = "#b42318"
 LOG_FONT = ("Consolas", 10)
-OK_MARKS = ("đã nhận quà", "đã nhận mã", "đã bấm select và ok", "quà, dừng", "xin vào")
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào")
 GIFT_HINT = "Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID."
 RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Ra khỏi mode thì bấm lại nút Goldrush. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
-CODE_HINT = "Mỗi dòng một mã, rồi bấm Nhập mã. Hoặc bấm Chạy mã mặc định. File mặc định là auto-typing-giftcode/giftcode_tool/ma-mac-dinh.txt."
 BAD_MARKS = (
     "lỗi",
     "timeout",
@@ -74,7 +65,6 @@ WARN_MARKS = (
     "không có quà",
     "sân đứng yên",
     "id sai",
-    "không được nhận",
     "dưới ",
     "dừng",
     "bỏ ",
@@ -335,21 +325,15 @@ class App:
             switch, text="Auto join rally", style="Segment.TButton", command=self.show_rally
         )
         self.rally_seg.pack(side="left", padx=(4, 0))
-        self.code_seg = ttk.Button(
-            switch, text="Gift code", style="Segment.TButton", command=self.show_code
-        )
-        self.code_seg.pack(side="left", padx=(4, 0))
 
         card_shell, self.card = bordered(frame)
         card_shell.pack(fill="x", pady=(8, 0))
         list_tab = ttk.Frame(self.card, style="Card.TFrame")
         scan_tab = ttk.Frame(self.card, style="Card.TFrame")
         rally_tab = ttk.Frame(self.card, style="Card.TFrame")
-        code_tab = ttk.Frame(self.card, style="Card.TFrame")
         self.list_page = list_tab
         self.scan_page = scan_tab
         self.rally_page = rally_tab
-        self.code_page = code_tab
 
         ttk.Label(list_tab, text="Mỗi dòng một UID", style="Card.TLabel").pack(anchor="w")
         self.ids = tk.Text(
@@ -400,37 +384,9 @@ class App:
             wraplength=520,
         ).pack(anchor="w", pady=(8, 0))
 
-        ttk.Label(code_tab, text="Mỗi dòng một mã", style="Card.TLabel").pack(anchor="w")
-        self.code = tk.Text(
-            code_tab,
-            height=UID_BOX_LINES,
-            font=ID_FONT,
-            bg=CARD_BG,
-            fg=LOG_FG,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            highlightcolor=ACCENT,
-            padx=8,
-            pady=6,
-            borderwidth=0,
-            insertbackground=LOG_FG,
-        )
-        self.code.pack(fill="x", pady=(8, 0))
-        self.code_default_btn = ttk.Button(
-            code_tab, text="Chạy mã mặc định", style="CardGhost.TButton", command=self.start_default_codes
-        )
-        self.code_default_btn.pack(anchor="w", pady=(8, 0))
-        ttk.Label(
-            code_tab,
-            text="Dán nhiều mã, mỗi dòng một mã. Mã nhận được thì sang mã sau, không bấm Open Another. File ma-mac-dinh.txt là danh sách của nút mặc định.",
-            style="CardHint.TLabel",
-            wraplength=520,
-        ).pack(anchor="w", pady=(8, 0))
-
         list_tab.pack(fill="x")
         self.root.update_idletasks()
-        page_height = max(page.winfo_reqheight() for page in (list_tab, scan_tab, rally_tab, code_tab))
+        page_height = max(page.winfo_reqheight() for page in (list_tab, scan_tab, rally_tab))
         self.card.pack_propagate(False)
         self.card.configure(height=page_height + 28)
 
@@ -492,8 +448,6 @@ class App:
     def run_current(self):
         if self.mode == "rally":
             self.start_rally()
-        elif self.mode == "code":
-            self.start_code()
         elif self.mode == "scan":
             self.start_scan()
         else:
@@ -508,9 +462,6 @@ class App:
     def show_rally(self):
         self._select("rally")
 
-    def show_code(self):
-        self._select("code")
-
     def _select(self, mode: str):
         if self.running:
             return
@@ -518,11 +469,9 @@ class App:
         self.list_page.pack_forget()
         self.scan_page.pack_forget()
         self.rally_page.pack_forget()
-        self.code_page.pack_forget()
         self.list_seg.configure(style="Segment.TButton")
         self.scan_seg.configure(style="Segment.TButton")
         self.rally_seg.configure(style="Segment.TButton")
-        self.code_seg.configure(style="Segment.TButton")
         if mode == "scan":
             self.scan_page.pack(fill="x")
             self.scan_seg.configure(style="SegmentOn.TButton")
@@ -540,15 +489,6 @@ class App:
             self.hint_var.set(RALLY_HINT)
             self.root.title("Auto join rally")
             self.progress.set("Sẵn sàng · join rally đến khi dừng")
-            return
-        if mode == "code":
-            self.code_page.pack(fill="x")
-            self.code_seg.configure(style="SegmentOn.TButton")
-            self.primary_btn.configure(text="Nhập mã")
-            self.title_var.set("Nhập gift code")
-            self.hint_var.set(CODE_HINT)
-            self.root.title("Nhập gift code")
-            self.progress.set("Sẵn sàng · nhiều mã hoặc danh sách mặc định")
             return
         self.list_page.pack(fill="x")
         self.list_seg.configure(style="SegmentOn.TButton")
@@ -590,35 +530,6 @@ class App:
         self.worker = threading.Thread(target=self._run_rally, daemon=True)
         self.worker.start()
 
-    def start_code(self):
-        if self.worker and self.worker.is_alive():
-            return
-        codes, bad = parse_codes(self.code.get("1.0", "end"))
-        if bad:
-            self.write("Bỏ qua mã không hợp lệ: " + ", ".join(bad[:8]), note=True)
-        if not codes:
-            self.write("Chưa có mã. Mỗi dòng một mã, hoặc bấm Chạy mã mặc định.")
-            return
-        self._begin_codes(codes)
-
-    def start_default_codes(self):
-        if self.worker and self.worker.is_alive():
-            return
-        codes = load_codes()
-        if not codes:
-            self.write("File mã mặc định đang trống.")
-            return
-        self._begin_codes(codes)
-
-    def _begin_codes(self, codes: list[str]):
-        self.stop.clear()
-        self._clear(self.detail_box)
-        self._lock()
-        self.progress.set(f"Đang nhập 0/{len(codes)} mã")
-        self.write(f"Nhập {len(codes)} mã, từ {codes[0]} đến {codes[-1]}.")
-        self.worker = threading.Thread(target=self._run_codes, args=(codes,), daemon=True)
-        self.worker.start()
-
     def _begin(self, ids: list[str]):
         self.stop.clear()
         self._clear(self.detail_box)
@@ -630,17 +541,15 @@ class App:
     def _lock(self):
         self.running = True
         self.primary_btn.configure(state="disabled")
-        self.code_default_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-        for button in (self.list_seg, self.scan_seg, self.rally_seg, self.code_seg):
+        for button in (self.list_seg, self.scan_seg, self.rally_seg):
             button.configure(state="disabled")
 
     def _unlock(self):
         self.running = False
         self.primary_btn.configure(state="normal")
-        self.code_default_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        for button in (self.list_seg, self.scan_seg, self.rally_seg, self.code_seg):
+        for button in (self.list_seg, self.scan_seg, self.rally_seg):
             button.configure(state="normal")
 
     def toggle_detail(self):
@@ -717,27 +626,6 @@ class App:
         finally:
             self.root.after(0, self._unlock)
 
-    def _run_codes(self, codes: list[str]):
-        try:
-            adb = AdbClient()
-            serial = adb.ensure_device()
-            self.write(f"Đã nối {serial}")
-            self.root.after(0, lambda s=serial: self._set_device(s))
-
-            def log(message: str):
-                self.write(message)
-                if message.startswith("[") and "Nhập mã" in message:
-                    self.root.after(0, lambda m=message: self.progress.set(m))
-
-            counts = CodeRunner(adb, log, self.stop, self.finder).run_many(codes)
-            summary = f"Xong. Nhận {counts['nhan']}, không nhận {counts['khong_nhan']}."
-            self.root.after(0, lambda text=summary: self.progress.set(text))
-        except Exception as exc:
-            self.write(f"Lỗi: {exc}")
-            self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
-        finally:
-            self.root.after(0, self._unlock)
-
     def _capture_only(self):
         try:
             adb = AdbClient()
@@ -758,7 +646,7 @@ class App:
             shot = adb.screenshot()
             hits = []
             lines = [f"Kiểm tra trên {serial}, {shot.shape[1]}x{shot.shape[0]}"]
-            for name in ("search", "add", "apply", "visit", "gift", "select", "ok", "close", "missing_id", "claim_limit", "friends", "community"):
+            for name in ("search", "add", "apply", "visit", "gift", "select", "ok", "close", "missing_id", "friends", "community"):
                 hit = self.finder.locate(shot, name)
                 threshold = self.finder.templates[name][1]["threshold"]
                 mark = "thấy" if hit.score >= threshold and hit.w else "không"
