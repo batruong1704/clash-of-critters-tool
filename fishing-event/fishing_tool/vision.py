@@ -265,17 +265,10 @@ def read_rods(img) -> int | None:
 
 
 def read_gold(img) -> int | None:
-    """Chữ vàng +Gold hiện thoáng ở trên con cá khi phá kỷ lục."""
-    return _read_digits(img, (0.60, 0.30, 0.95, 0.40), (0.017, 0.027), "gold")
+    """Chữ vàng +Gold hiện thoáng bên phải đầu cá, phía trên số trắng cạnh đồng xu bạc.
 
-
-def has_record_banner(img) -> bool:
-    """Có dòng chữ xanh New Team Record. Lúc đó số trắng dưới con cá chính là Gold vừa nhận."""
-    hsv = cv2.cvtColor(img[190:250, 80:640], cv2.COLOR_BGR2HSV)
-    green = (hsv[..., 0] >= 35) & (hsv[..., 0] <= 95) & (hsv[..., 1] >= 80) & (hsv[..., 2] >= 160)
-    return int(green.sum()) >= 800
-
-
-def read_record_amount(img) -> int | None:
-    """Số trắng cạnh đồng xu trên màn phá kỷ lục, sau khi chữ vàng +Gold đã biến."""
-    return _read_digits(img, (0.34, 0.50, 0.72, 0.60), (0.016, 0.030), "white")
+    Đo trên demo-video.mp4: chữ vàng hiện khoảng giây 23,6 đến 24,2 rồi mất trước giây 24,4.
+    Vùng đọc chỉ phủ hàng chữ đó (y khoảng 0,30–0,40). Không kéo xuống hàng số trắng, dòng cân nặng hay dòng Beat …%.
+    Chữ vừa hiện thì nét còn cao hơn lúc đứng yên, nên khoảng chiều cao rộng hơn số rod.
+    """
+    return _read_digits(img, (0.58, 0.30, 0.88, 0.40), (0.016, 0.036), "gold")

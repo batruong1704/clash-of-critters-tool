@@ -25,10 +25,8 @@ from fishing_tool.vision import (
     Scene,
     Templates,
     fish_tile_point,
-    has_record_banner,
     normalize,
     read_gold,
-    read_record_amount,
     read_multiplier,
     read_rods,
     read_scene,
@@ -140,6 +138,7 @@ class Runner:
         self._busy_saved = 0
         self._result_saved = 0
         self._dismiss_count = 0
+        self._seen_gold: list[int] = []
 
     # ----- vòng chính -----
 
@@ -190,10 +189,14 @@ class Runner:
                 self._cast_started = time.time()
                 self._cast_taps = 0
                 self._fished = False
+                self._seen_gold.clear()
                 self.log(f"Lượt {self.stats.casts}: cần đã được quăng ngoài tool.")
                 self.on_stats(self.stats)
             if scene.kind in ("wait", "reel", "slider", "busy"):
                 self._fished = True
+            # Chữ vàng chỉ hiện chưa tới 1 giây, ngay lúc chuyển từ Cool! sang màn kết quả.
+            if self._fished and scene.kind in ("busy", "unknown", "result"):
+                self._note_gold(img)
             if scene.kind in ("wait", "reel", "slider", "busy", "timesup", "result"):
                 self._progressed = True
             if scene.kind not in ("result", "timesup"):
@@ -256,6 +259,7 @@ class Runner:
             self._cast_open = True
             self._progressed = False
             self._fished = False
+            self._seen_gold.clear()
             self._cast_retries = 0
             self._cast_started = time.time()
             self._cast_taps = 0
@@ -391,13 +395,20 @@ class Runner:
         self._pause(0.5)
 
     def _on_unknown(self, img, scene, started, ended) -> None:
-        self._pause(0.8)
+        # Sau khi quăng, cảnh Cool! bị xếp vào màn lạ. Ngủ 0,8 giây ở đây sẽ bỏ lỡ chữ vàng.
+        self._pause(0.05 if self._fished else 0.8)
 
     # ----- tiện ích -----
 
+    def _note_gold(self, img) -> None:
+        """Ghi số vàng nếu khung này còn chữ +Gold. Chữ biến trong chưa tới một giây."""
+        value = read_gold(img)
+        if value:
+            self._seen_gold.append(value)
+
     def _read_result(self, first) -> list[int]:
         """Gold chỉ hiện thoáng khi phá kỷ lục, nên chụp thêm vài ảnh trước khi bấm bỏ qua."""
-        golds: list[int] = []
+        golds = list(self._seen_gold)
         frame = first
         for index in range(RESULT_SAMPLES + 1):
             gold = read_gold(frame)
@@ -415,11 +426,8 @@ class Runner:
             frame = normalize(self.adb.screenshot())
             if read_scene(frame, self.templates).kind != "result":
                 break
-        if not golds and has_record_banner(first):
-            amount = read_record_amount(first)
-            if amount:
-                golds.append(amount)
         self._trace(f"đọc kết quả: gold={golds}")
+        self._seen_gold.clear()
         return golds
 
     def _record(self, outcome: str, gold: int) -> None:
