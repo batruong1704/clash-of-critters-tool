@@ -30,6 +30,7 @@ from fishing_tool.vision import (
     read_multiplier,
     read_rods,
     read_scene,
+    read_slider,
 )
 
 BUTTON_XY = (int(BUTTON[0] * REF_W), int(BUTTON[1] * REF_H))
@@ -51,11 +52,20 @@ TAP_COOLDOWN = 0.9
 # ở giữa vùng vàng khoảng 0,14s sau lệnh. 0,30s là số cũ, đo trước khi bấm qua shell giữ sẵn, và làm cú bấm tới muộn.
 # Tool tự dò lại số này từ các cú trúng và nhớ qua các phiên. Khi chưa đủ cú trúng thì dùng số này.
 BASE_LATENCY = 0.15
-# Thử lệch thêm khi trượt liên tiếp (giây, dương là bấm muộn hơn).
-MISS_OFFSETS = (0.0, 0.05, -0.05, 0.10, -0.10, 0.15, -0.15)
-# Thanh thứ 2 trở đi trong một lượt thường hẹp hơn 120px. Lệch 0,10s là khoảng 25px, đủ để ra khỏi vùng đó.
+# Thanh thứ 2 trở đi thường hẹp hơn 120px. Video4 (17:00): lúc phát lệnh mồi còn giữa,
+# 0,10s sau đã vượt tâm 25–40px. Bấm sớm hơn chừng đó.
+# Cửa sổ còn xa hơn REFINE_HORIZON thì chụp thêm, tính từ lúc quyết định chứ không từ lúc bắt đầu chụp.
+# Tính từ lúc chụp sẽ trừ oan ~0,3s và bỏ cả cửa sổ sắp tới. Lượt 6 lúc 17:16 đứng 12s ở thanh 73px vì vậy.
+# Trượt thì lấy ảnh mới tính lại, không xê ±0,03s (mới được khoảng 7px).
 NARROW_ZONE = 120
-NARROW_OFFSETS = (0.0, 0.03, -0.03)
+NARROW_LEAD = 0.12
+# Vùng rộng khoảng 147px. Video10: độ trễ học được 0,10s khiến lệnh tới khi mồi đã sát mép.
+# Ba ảnh cùng một chiều là đủ vận tốc và pha. Lệnh của vùng rộng tính với 0,24s.
+# Cửa sổ còn xa hơn 0,70s thì chụp tiếp để chỉnh pha, không ngủ đến lúc bấm.
+WIDE_LATENCY = 0.24
+WIDE_MIN_SAMPLES = 4
+WIDE_FIT_RMS = 16.0
+REFINE_HORIZON = 0.70
 MIN_SAMPLES_BEFORE_TAP = 5
 MAX_SAMPLES_BEFORE_TAP = 7
 ZONE_SHIFT = 12
@@ -116,6 +126,10 @@ class Runner:
         self._fished = False  # lượt này đã thấy cần được quăng (chờ, reel, thanh trượt)
         self._cast_started = 0.0
         self._cast_taps = 0
+        self._cast_tap_log: list[dict] = []
+        self._slider_bar = 0
+        self._last_obs: dict | None = None
+        self._cast_tap_flushed = False
         self._cast_retries = 0
         self._last_cast_tap = 0.0
         self._mult_taps = 0
@@ -135,10 +149,13 @@ class Runner:
         # learn=False (mô phỏng, kiểm tra) thì không đọc cũng không ghi bộ nhớ học.
         self.memory = Memory(enabled=learn)
         self._latency = self._learned_latency() if learn else BASE_LATENCY
+        self._latency_nudge = 0.0
         self._pending_tap: dict | None = None
         self._last_offset = 0.0
         self._csv = None
         self._writer = None
+        self._tap_handle = None
+        self._tap_writer = None
         self._trace_file = None
         self._t0 = time.time()
         self._last_kind = ""
@@ -155,13 +172,57 @@ class Runner:
         self.log(f"Tự câu cá: {self.target} lượt, hệ số x{self.multiplier}.")
         self.log(f"Độ trễ cú bấm bắt đầu từ {self._latency:.2f}s ({self.memory.summary()}).")
         trace_path = path.with_name(path.stem + "-vet.txt")
+        tap_path = path.with_name(path.stem + "-bam.csv")
         try:
-            with path.open("w", newline="", encoding="utf-8-sig") as handle, trace_path.open("w", encoding="utf-8") as trace:
+            with (
+                path.open("w", newline="", encoding="utf-8-sig") as handle,
+                trace_path.open("w", encoding="utf-8") as trace,
+                tap_path.open("w", newline="", encoding="utf-8-sig") as taps,
+            ):
                 self._trace_file = trace
                 self._t0 = time.time()
                 self._writer = csv.writer(handle)
                 self._writer.writerow(["luot", "ket_qua", "vang", "so_lan_bam", "giay"])
-                self._loop()
+                self._tap_handle = taps
+                self._tap_writer = csv.writer(taps)
+                self._tap_writer.writerow(
+                    [
+                        "luot",
+                        "ket_qua",
+                        "lan",
+                        "thanh",
+                        "lan_tren_thanh",
+                        "ket_qua_bam",
+                        "t_lenh",
+                        "tu_quang",
+                        "tre",
+                        "lech",
+                        "moi_du_doan",
+                        "vung_lo",
+                        "vung_hi",
+                        "rong",
+                        "vung_that_lo",
+                        "vung_that_hi",
+                        "toc_do",
+                        "sai_so",
+                        "so_mau",
+                        "cho",
+                        "mau_cuoi_t",
+                        "mau_cuoi_moi",
+                        "chup_dau",
+                        "chup_cuoi",
+                        "mau_sau_t",
+                        "mau_sau_moi",
+                        "mau_sau_lo",
+                        "mau_sau_hi",
+                        "err_px",
+                    ]
+                )
+                try:
+                    self._loop()
+                finally:
+                    if self._cast_open:
+                        self._flush_cast_taps("dung")
         except Stopped:
             self.log("Đã dừng.")
         except Finished as done:
@@ -169,11 +230,13 @@ class Runner:
         finally:
             self.adb.close()
             self._writer = None
+            self._tap_handle = None
+            self._tap_writer = None
             self._trace_file = None
         s = self.stats
         self.log(
             f"Tổng kết: {s.casts} lượt quăng, {s.caught} thành công, {s.failed} thất bại, "
-            f"{s.gold} Gold. Bảng chi tiết: {path}"
+            f"{s.gold} Gold. Bảng chi tiết: {path}. Từng cú bấm: {tap_path}"
         )
         return s
 
@@ -195,6 +258,7 @@ class Runner:
                 self._cast_open = True
                 self._cast_started = time.time()
                 self._cast_taps = 0
+                self._prepare_cast_taps()
                 self._fished = False
                 self._seen_gold.clear()
                 self.log(f"Lượt {self.stats.casts}: cần đã được quăng ngoài tool.")
@@ -270,6 +334,7 @@ class Runner:
             self._cast_retries = 0
             self._cast_started = time.time()
             self._cast_taps = 0
+            self._prepare_cast_taps()
             self._reset_slider()
             text = "?" if rods is None else str(rods)
             self.log(f"Lượt {self.stats.casts}/{self.target}: quăng cần (còn {text} rod).")
@@ -290,6 +355,7 @@ class Runner:
     def _on_reel(self, img, scene, started, ended) -> None:
         now = time.time()
         if now - self._reel_tap < 0.9:
+            self._follow_pointer(img, started, ended)
             self._pause(0.1)
             return
         self.log("Cá cắn. Bấm Reel it in.")
@@ -299,6 +365,7 @@ class Runner:
         self._pause(0.3)
 
     def _on_busy(self, img, scene, started, ended) -> None:
+        self._follow_pointer(img, started, ended)
         # Lưu vài ảnh để xem màn nào bị gọi là chuyển cảnh. Mỗi lần chạy tối đa 8 ảnh.
         if self._busy_saved < 8:
             from gift_tool.vision import imwrite
@@ -309,19 +376,103 @@ class Runner:
             self._trace(f"busy lưu ảnh {self._busy_saved}: vùng={slider.lo}-{slider.hi} mồi={slider.pointer}")
         self._pause(0.05)
 
+    def _follow_pointer(self, img, started: float, ended: float) -> None:
+        """Ghi mồi khi nó đã chạy mà vùng vàng chưa hiện. Vàng hiện lên thì quỹ đạo có sẵn."""
+        if not self._fished or self._zone is not None:
+            return
+        slider = read_slider(img)
+        if slider.pointer is None:
+            return
+        when = started + CAPTURE_FRACTION * (ended - started)
+        if self.tracker.samples:
+            prev_t, prev_x = self.tracker.samples[-1]
+            if when - prev_t < 0.12:
+                return
+            if when - prev_t < 0.50 and abs(slider.pointer - prev_x) < 8:
+                return
+        self.tracker.add(when, float(slider.pointer))
+        self._trace(f"mồi trước vùng t={when - self._t0:.2f} mồi={slider.pointer:.0f}")
+
+    def _carry_motion(self) -> None:
+        """Giữ đoạn mồi đang chạy sang thanh mới. Bỏ mẫu đứng yên (cú trúng vừa đóng băng mồi)."""
+        samples = list(self.tracker.samples)
+        self.tracker.reset()
+        if len(samples) < 2:
+            return
+        latest = samples[-1][0]
+        recent = [(t, x) for t, x in samples if latest - t <= 1.2]
+        while len(recent) >= 2 and abs(recent[-1][1] - recent[-2][1]) < 15:
+            recent.pop()
+        if len(recent) < 2 or latest - recent[-1][0] > 0.70:
+            return
+        if abs(recent[-1][1] - recent[0][1]) < 30:
+            return
+        for when, pointer in recent:
+            self.tracker.add(when, pointer)
+
+    def _command_latency(self, narrow: bool) -> float:
+        base = self._latency + NARROW_LEAD if narrow else WIDE_LATENCY
+        return min(0.40, max(0.08, base + self._latency_nudge))
+
+    def _landing_error(self, row: dict) -> float | None:
+        """Mồi lúc game nhận, trừ tâm vùng đang nhắm (px). Dương là lệch sang phải."""
+        arrival = row["t_lenh"] + row["tre"]
+        pts = [(t - self._t0, x) for t, x in self.tracker.samples]
+        if row.get("mau_sau_t") is not None:
+            pts.append((float(row["mau_sau_t"]), float(row["mau_sau_moi"])))
+        pts = sorted({(round(t, 4), x) for t, x in pts})
+        if len(pts) < 2:
+            return None
+        landed = None
+        for (t0, x0), (t1, x1) in zip(pts, pts[1:]):
+            if t0 <= arrival <= t1 and 0 < t1 - t0 <= 0.70:
+                landed = x0 + (x1 - x0) * (arrival - t0) / (t1 - t0)
+                break
+        if landed is None:
+            nearest = min(pts, key=lambda item: abs(item[0] - arrival))
+            if abs(nearest[0] - arrival) > 0.60:
+                return None
+            idx = pts.index(nearest)
+            if idx + 1 < len(pts) and pts[idx + 1][0] - nearest[0] <= 0.70:
+                t0, x0 = nearest
+                t1, x1 = pts[idx + 1]
+            elif idx > 0 and nearest[0] - pts[idx - 1][0] <= 0.70:
+                t0, x0 = pts[idx - 1]
+                t1, x1 = nearest
+            else:
+                return None
+            if t1 == t0:
+                return None
+            landed = nearest[1] + (x1 - x0) / (t1 - t0) * (arrival - nearest[0])
+        return float(landed - (row["vung_lo"] + row["vung_hi"]) / 2)
+
+    def _nudge_from_miss(self, row: dict) -> None:
+        """Lệch cùng chiều vận tốc là lệnh tới muộn. Lần mồi quay lại phát lệnh sớm hơn đúng chừng đó."""
+        err = row.get("err_px")
+        if err is None:
+            return
+        vel = self.tracker.velocity(self._t0 + row["t_lenh"] + row["tre"])
+        if vel is None or abs(vel) < 80:
+            return
+        self._latency_nudge = min(0.08, max(-0.08, err / vel))
+        self._trace(f"chỉnh trễ {self._latency_nudge:+.2f}s cho lần mồi quay lại")
+
     def _on_slider(self, img, scene, started, ended) -> None:
         slider = scene.detail["slider"]
         when = started + CAPTURE_FRACTION * (ended - started)
         zone = (slider.lo, slider.hi)
+        self._note_after_tap(when, slider.pointer, zone)
         if self._zone is not None and not _same_zone(zone, self._zone):
             # Vùng vàng đổi: cú bấm trước đã trúng, game sang thanh mới.
             self._on_hit()
             self._zone = None
         if self._zone is None:
+            self._slider_bar += 1
             self._zone = zone
             self._zone_seen = []
-            self.tracker.reset()
+            self._carry_motion()
             self._miss_streak = 0
+            self._latency_nudge = 0.0
         else:
             # Mồi đè lên mép vùng vàng làm vùng trông hẹp hơn. Giữ bản rộng nhất để nhận ra còn cùng một thanh.
             self._zone = (min(self._zone[0], zone[0]), max(self._zone[1], zone[1]))
@@ -329,37 +480,65 @@ class Runner:
         del self._zone_seen[:-3]
         aim = self._aim_zone()
         self.tracker.add(when, slider.pointer)
-        self._trace(f"mẫu t={when - self._t0:.2f} mồi={slider.pointer:.0f} vùng={zone[0]}-{zone[1]}")
+        self._last_obs = {
+            "t": when - self._t0,
+            "moi": float(slider.pointer),
+            "chup_dau": started - self._t0,
+            "chup_cuoi": ended - self._t0,
+        }
+        self._trace(
+            f"mẫu t={when - self._t0:.2f} mồi={slider.pointer:.0f} vùng={zone[0]}-{zone[1]} "
+            f"chụp {started - self._t0:.2f}-{ended - self._t0:.2f}"
+        )
 
         now = time.time()
         if now < self._cooldown_until:
             return
         if self._tapped_zone:
-            # Đã bấm mà vẫn là vùng cũ: trượt. Mồi tiếp tục chạy nên giữ mô hình, chỉ đổi độ lệch giờ.
+            # Đã bấm mà vẫn là vùng cũ: trượt. Mồi tiếp tục chạy nên giữ mô hình, ảnh sau tính lại giờ bấm.
             self._tapped_zone = False
             self._remember(hit=False)
             self._miss_streak += 1
             self.log(f"Trượt ({self._miss_streak}). Thử lại.")
             self._trace("TRƯỢT")
-        # Đo trên các lượt thật: đoán từ 3 mẫu lệch trung vị 22px, p90 77px (vùng vàng chỉ rộng ~110px); từ 5 mẫu p90 còn 45px.
-        # Chờ thêm ~0.8s để đỡ trượt, vì mỗi lần trượt tốn 2s đồng hồ cộng với 2s bấm lại.
         count = self.tracker.count
-        ready = count >= MIN_SAMPLES_BEFORE_TAP and (self.tracker.confident() or count >= MAX_SAMPLES_BEFORE_TAP)
-        if not ready:
-            return
+        fit_now = self.tracker.fit()
+        straight = self.tracker.straight()
         narrow = aim[1] - aim[0] < NARROW_ZONE
-        # Vùng hẹp không chịu được đường mồi còn lệch. Chờ thêm một mẫu cho khớp hơn rồi mới bấm lần đầu.
-        if narrow and self._miss_streak == 0:
-            fit_now = self.tracker.fit()
-            if count < 6 or fit_now is None or fit_now[2] > 18:
+        clean = straight is not None and straight[1] <= (12.0 if narrow else 14.0)
+        if narrow:
+            ready = clean or (
+                count >= MIN_SAMPLES_BEFORE_TAP and (self.tracker.confident() or count >= MAX_SAMPLES_BEFORE_TAP)
+            )
+            if not ready:
                 return
-        offsets = NARROW_OFFSETS if narrow else MISS_OFFSETS
-        offset = offsets[self._miss_streak % len(offsets)]
-        # Bấm muộn hơn offset giây nghĩa là coi như cú bấm tới game sớm hơn offset giây.
-        latency = self._latency - offset
-        due = self.tracker.plan(now, latency, aim)
+            # Chưa có đoạn thẳng sạch thì lần bấm đầu của vùng hẹp vẫn chờ đường khớp hơn.
+            if not clean and self._miss_streak == 0 and (count < 6 or fit_now is None or fit_now[2] > 18):
+                return
+            offset = 0.0
+            latency = self._command_latency(narrow=True)
+        else:
+            # Ba ảnh một chiều, hoặc bốn ảnh khớp, là bấm được. Không đợi đủ năm ảnh.
+            early = clean or (
+                count >= WIDE_MIN_SAMPLES
+                and fit_now is not None
+                and fit_now[2] <= WIDE_FIT_RMS
+                and self.tracker.confident()
+            )
+            ready = early or (
+                count >= MIN_SAMPLES_BEFORE_TAP and (self.tracker.confident() or count >= MAX_SAMPLES_BEFORE_TAP)
+            )
+            if not ready:
+                return
+            offset = 0.0
+            latency = self._command_latency(narrow=False)
+        measured = self.memory.eat_limit() if self.memory.enabled else None
+        due = self.tracker.plan(now, latency, aim, eat=measured)
         if due is None:
-            # Vùng vàng hẹp nên trong 2.4s tới không có lúc nào mồi chắc chắn nằm trong vùng ăn thật. Chờ mẫu mới rồi tính lại.
+            # Trong 2.4s tới không có lúc nào mồi chắc chắn nằm trong vùng ăn thật. Chờ mẫu mới rồi tính lại.
+            return
+        # Còn xa thì chụp thêm. Đoạn mồi chạy về là một đoạn thẳng sạch để chỉnh pha rồi mới bấm.
+        if due - now > REFINE_HORIZON:
             return
         fit = self.tracker.fit()
         self._pending_tap = {
@@ -372,6 +551,7 @@ class Runner:
         self.adb.tap_fast(*BUTTON_XY)
         tapped = time.time()
         self._pending_tap["time"] = tapped
+        self._cast_tap_log.append(self._tap_row(tapped, latency, offset, aim, fit))
         self._trace(
             f"BẤM lệnh t={tapped - self._t0:.2f} dự kiến tới game {tapped - self._t0 + latency:.2f} "
             f"mồi dự đoán={self.tracker.position(tapped + latency):.0f} độ lệch={offset:+.2f} bias={self._bias:+.2f} trễ={latency:.2f}"
@@ -458,6 +638,7 @@ class Runner:
         seconds = time.time() - self._cast_started
         if self._writer is not None:
             self._writer.writerow([s.casts, outcome, gold, self._cast_taps, f"{seconds:.1f}"])
+        self._flush_cast_taps(outcome)
         self._cast_open = False
         self.on_stats(s)
 
@@ -474,8 +655,14 @@ class Runner:
         tap, self._pending_tap = self._pending_tap, None
         if tap is None:
             return
+        self._mark_open_tap(hit)
+        err = None
+        for row in reversed(self._cast_tap_log):
+            if row.get("ket_qua_bam") is not None:
+                err = row.get("err_px")
+                break
         ok = consistent_latencies(self.tracker, tap["time"], self._zone, hit) if self._zone is not None else None
-        self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok)
+        self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok, err)
         if self.memory.enabled:
             self._latency = self._learned_latency()
 
@@ -491,12 +678,168 @@ class Runner:
         # 100 lượt vừa chạy: dưới 0,10s thì mồi ra khỏi vùng hẹp trước khi cú bấm tới, trên 0,18s thì tới quá sớm.
         return min(0.18, max(0.10, found[0]))
 
+    def _prepare_cast_taps(self) -> None:
+        """Xóa bảng cú bấm của lượt trước. Gọi lúc bắt đầu một lượt quăng."""
+        self._cast_tap_log = []
+        self._slider_bar = 0
+        self._last_obs = None
+        self._cast_tap_flushed = False
+
+    def _note_after_tap(self, when: float, pointer: float, zone: tuple[int, int]) -> None:
+        """Mẫu đầu tiên sau lệnh bấm. Dùng để biết mồi thật đang ở đâu lúc ảnh kế tiếp."""
+        if not self._cast_tap_log:
+            return
+        row = self._cast_tap_log[-1]
+        if row["mau_sau_t"] is not None:
+            return
+        if when - self._t0 <= row["t_lenh"] + 0.02:
+            return
+        row["mau_sau_t"] = when - self._t0
+        row["mau_sau_moi"] = float(pointer)
+        row["mau_sau_lo"] = zone[0]
+        row["mau_sau_hi"] = zone[1]
+
+    def _tap_row(self, tapped: float, latency: float, offset: float, aim: tuple[float, float], fit) -> dict:
+        obs = self._last_obs or {}
+        t_lenh = tapped - self._t0
+        predicted = self.tracker.position(tapped + latency)
+        widest = self._zone or (int(aim[0]), int(aim[1]))
+        return {
+            "lan": self._cast_taps + 1,
+            "thanh": self._slider_bar,
+            "lan_tren_thanh": self._miss_streak + 1,
+            "ket_qua_bam": None,
+            "t_lenh": t_lenh,
+            "tu_quang": tapped - self._cast_started,
+            "tre": latency,
+            "lech": offset,
+            "moi_du_doan": predicted,
+            "vung_lo": aim[0],
+            "vung_hi": aim[1],
+            "rong": aim[1] - aim[0],
+            "vung_that_lo": widest[0],
+            "vung_that_hi": widest[1],
+            "toc_do": None if fit is None else fit[0],
+            "sai_so": None if fit is None else fit[2],
+            "so_mau": self.tracker.count,
+            "cho": None if not obs else t_lenh - obs["t"],
+            "mau_cuoi_t": obs.get("t"),
+            "mau_cuoi_moi": obs.get("moi"),
+            "chup_dau": obs.get("chup_dau"),
+            "chup_cuoi": obs.get("chup_cuoi"),
+            "mau_sau_t": None,
+            "mau_sau_moi": None,
+            "mau_sau_lo": None,
+            "mau_sau_hi": None,
+            "err_px": None,
+        }
+
+    def _mark_open_tap(self, hit: bool) -> None:
+        for row in reversed(self._cast_tap_log):
+            if row["ket_qua_bam"] is None:
+                row["ket_qua_bam"] = "trung" if hit else "truot"
+                row["err_px"] = self._landing_error(row)
+                if not hit:
+                    self._nudge_from_miss(row)
+                err = "không đo được" if row["err_px"] is None else f"{row['err_px']:+.0f}px"
+                self._trace(f"err_px={err}")
+                return
+
+    def _flush_cast_taps(self, outcome: str) -> None:
+        """Ghi mọi cú bấm của lượt này. Lượt không có thanh trượt vẫn được một dòng lan=0."""
+        if self._cast_tap_flushed or self.stats.casts <= 0:
+            return
+        self._cast_tap_flushed = True
+        rows = self._cast_tap_log
+        for row in rows:
+            if row["ket_qua_bam"] is None:
+                row["ket_qua_bam"] = "truot" if outcome == "that_bai" else "khong_ro"
+        n = len(rows)
+        self._trace(f"lượt {self.stats.casts}: {n} lần bấm thanh trượt")
+        self.log(f"Lượt {self.stats.casts}: {n} lần bấm thanh trượt.")
+        if n == 0:
+            self._write_tap_csv(outcome, None)
+        for row in rows:
+            sau = ""
+            if row["mau_sau_t"] is not None:
+                sau = (
+                    f" sau t={row['mau_sau_t']:.2f} mồi={row['mau_sau_moi']:.0f}"
+                    f" vùng sau={row['mau_sau_lo']}-{row['mau_sau_hi']}"
+                )
+            self._trace(
+                f"  lần {row['lan']} thanh {row['thanh']} (lần {row['lan_tren_thanh']} trên thanh):"
+                f" t={row['t_lenh']:.2f} từ quăng {row['tu_quang']:+.2f}s"
+                f" trễ={row['tre']:.2f} lệch={row['lech']:+.2f}"
+                f" mồi={_num(row['moi_du_doan'], '.0f')} vùng={row['vung_lo']:.0f}-{row['vung_hi']:.0f}"
+                f" rộng={row['rong']:.0f} vùng thật={row['vung_that_lo']}-{row['vung_that_hi']}"
+                f" tốc độ={_num(row['toc_do'], '.0f')} sai số={_num(row['sai_so'], '.0f')}px"
+                f" mẫu={row['so_mau']} chờ={_num(row['cho'], '.2f')}s"
+                f" ảnh cuối t={_num(row['mau_cuoi_t'], '.2f')} mồi={_num(row['mau_cuoi_moi'], '.0f')}"
+                f" chụp {_num(row['chup_dau'], '.2f')}-{_num(row['chup_cuoi'], '.2f')}"
+                f" err_px={_num(row.get('err_px'), '+.0f')}"
+                f"{sau} {str(row['ket_qua_bam']).upper()}"
+            )
+            self._write_tap_csv(outcome, row)
+        if self._tap_handle is not None:
+            self._tap_handle.flush()
+        self._cast_tap_log = []
+
+    def _write_tap_csv(self, outcome: str, row: dict | None) -> None:
+        if self._tap_writer is None:
+            return
+        if row is None:
+            self._tap_writer.writerow([self.stats.casts, outcome, 0, "", "", "", *([""] * 23)])
+            return
+        self._tap_writer.writerow(
+            [
+                self.stats.casts,
+                outcome,
+                row["lan"],
+                row["thanh"],
+                row["lan_tren_thanh"],
+                row["ket_qua_bam"],
+                _num(row["t_lenh"], ".3f"),
+                _num(row["tu_quang"], ".3f"),
+                _num(row["tre"], ".3f"),
+                _num(row["lech"], ".3f"),
+                _num(row["moi_du_doan"], ".1f"),
+                _num(row["vung_lo"], ".0f"),
+                _num(row["vung_hi"], ".0f"),
+                _num(row["rong"], ".0f"),
+                row["vung_that_lo"],
+                row["vung_that_hi"],
+                _num(row["toc_do"], ".0f"),
+                _num(row["sai_so"], ".1f"),
+                row["so_mau"],
+                _num(row["cho"], ".3f"),
+                _num(row["mau_cuoi_t"], ".3f"),
+                _num(row["mau_cuoi_moi"], ".1f"),
+                _num(row["chup_dau"], ".3f"),
+                _num(row["chup_cuoi"], ".3f"),
+                _num(row["mau_sau_t"], ".3f"),
+                _num(row["mau_sau_moi"], ".1f"),
+                row["mau_sau_lo"] if row["mau_sau_lo"] is not None else "",
+                row["mau_sau_hi"] if row["mau_sau_hi"] is not None else "",
+                _num(row.get("err_px"), "+.1f"),
+            ]
+        )
+
     def _aim_zone(self) -> tuple[float, float]:
-        """Vùng dùng để nhắm: giữa 3 lần đọc gần nhất, không phải bản ghép rộng nhất từ đầu thanh."""
+        """Vùng dùng để nhắm: giữa 3 lần đọc gần nhất.
+
+        Mồi che một mép thì lần đọc vừa rồi hẹp hẳn so với bản rộng nhất của cùng thanh.
+        Nhắm theo vệt hẹp đó (có lúc chỉ còn ~36px) thì cửa sổ giữa quá nhỏ, tool đứng chờ đến hết giờ.
+        """
         los = sorted(zone[0] for zone in self._zone_seen)
         his = sorted(zone[1] for zone in self._zone_seen)
         mid = len(los) // 2
-        return float(los[mid]), float(his[mid])
+        recent = (float(los[mid]), float(his[mid]))
+        if self._zone is None:
+            return recent
+        widest = (float(self._zone[0]), float(self._zone[1]))
+        if recent[1] - recent[0] < 0.75 * (widest[1] - widest[0]):
+            return widest
+        return recent
 
     def _reset_slider(self, hit: bool = False) -> None:
         if hit and self._tapped_zone and self._zone is not None:
@@ -585,6 +928,12 @@ class Runner:
     def _check(self) -> None:
         if self.stop.is_set():
             raise Stopped()
+
+
+def _num(value, spec: str) -> str:
+    if value is None:
+        return ""
+    return format(value, spec)
 
 
 def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:

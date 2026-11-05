@@ -83,19 +83,51 @@ class Tracker:
         speed, phase, _ = fit
         return float(_triangle(np.array([phase + speed * when]), self.span, self.lo)[0])
 
-    def plan(self, now: float, latency: float, zone: tuple[float, float], horizon: float = 2.4):
+    def velocity(self, when: float) -> float | None:
+        """Tốc độ có dấu (px/s) của mô hình tại thời điểm này. Dương là chạy sang phải."""
+        before = self.position(when)
+        after = self.position(when + 0.02)
+        if before is None or after is None:
+            return None
+        return (after - before) / 0.02
+
+    def straight(self, n: int = 3) -> tuple[float, float] | None:
+        """(tốc độ có dấu px/s, sai số px) nếu n mẫu cuối đi một chiều, không nảy và không đứng yên."""
+        if len(self.samples) < n:
+            return None
+        pts = self.samples[-n:]
+        dts = [pts[i][0] - pts[i - 1][0] for i in range(1, n)]
+        dxs = [pts[i][1] - pts[i - 1][1] for i in range(1, n)]
+        if any(dt < 0.12 or dt > 0.80 for dt in dts):
+            return None
+        if abs(sum(dxs)) < 40 or any(dx * sum(dxs) <= 0 for dx in dxs):
+            return None
+        speeds = [dx / dt for dx, dt in zip(dxs, dts)]
+        mean = sum(speeds) / len(speeds)
+        if abs(mean) < 80 or any(abs(speed - mean) > max(40.0, abs(mean) * 0.25) for speed in speeds):
+            return None
+        x0, t0 = pts[0][1], pts[0][0]
+        err = [abs(x0 + mean * (t - t0) - x) for t, x in pts]
+        rms = (sum(item * item for item in err) / len(err)) ** 0.5
+        if rms > 18:
+            return None
+        return mean, rms
+
+    def plan(self, now: float, latency: float, zone: tuple[float, float], horizon: float = 2.4, eat: float | None = None):
         """Giờ phát lệnh bấm (time.time) để mồi vào giữa đúng vùng này. None khi chưa có mô hình.
 
         Mỗi thanh trong một lượt hẹp hơn thanh trước. Sai số dự đoán không nhỏ theo vùng, nên không lấy
         một độ lệch trung bình rồi cộng vào vùng hẹp: vùng sau sẽ bị bấm sát mép. Chỉ bấm khi mồi được
-        dự đoán nằm trong 40% giữa của vùng đang thấy.
+        dự đoán nằm trong 40% giữa của vùng đang thấy. `eat` là bán kính đo được từ các cú đã chấm
+        (px quanh tâm). Có số này thì không nhắm rộng hơn mức đó, và cũng không rộng hơn 40% nhìn thấy.
         """
         if self.fit() is None:
             return None
         center = (zone[0] + zone[1]) / 2
         width = zone[1] - zone[0]
         steps = np.arange(0.02, horizon, 0.01)
-        eat = width / 2 * 0.40
+        visual = width / 2 * 0.40
+        eat = visual if eat is None else min(visual, eat)
         xs = np.array([self.position(now + step + latency) for step in steps])
         dist = np.abs(xs - center)
         inside = dist <= eat

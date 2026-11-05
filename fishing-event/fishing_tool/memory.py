@@ -111,6 +111,23 @@ class Memory:
             return None
         return float(np.median(centers)), len(centers)
 
+    def eat_limit(self) -> float | None:
+        """Bán kính quanh tâm (px) mà các cú trúng còn nằm trong. None khi chưa đủ 20 cú có err_px.
+
+        Lấy phân vị 80 của |err_px| các cú trúng. Nếu một cú trượt lệch ít hơn mức đó thì hạ xuống dưới cú trượt ấy.
+        """
+        rows = [tap for tap in self.taps if tap.get("err") is not None]
+        if len(rows) < 20:
+            return None
+        hits = sorted(abs(float(tap["err"])) for tap in rows if tap.get("hit"))
+        misses = sorted(abs(float(tap["err"])) for tap in rows if not tap.get("hit"))
+        if len(hits) < 8:
+            return None
+        limit = hits[min(len(hits) - 1, int(round((len(hits) - 1) * 0.80)))]
+        if misses and misses[0] - 2 >= 12:
+            limit = min(limit, misses[0] - 2)
+        return float(min(55.0, max(12.0, limit)))
+
     def record(
         self,
         total: float,
@@ -119,6 +136,7 @@ class Memory:
         speed: float | None = None,
         first: bool = False,
         ok: list[float] | None = None,
+        err: float | None = None,
     ) -> None:
         if not self.enabled:
             return
@@ -131,6 +149,7 @@ class Memory:
                 "speed": None if speed is None else round(speed),
                 "first": first,
                 "ok": ok,
+                "err": None if err is None else round(float(err), 1),
             }
         )
         if len(self.taps) > KEEP_TAPS:

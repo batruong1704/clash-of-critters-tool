@@ -35,7 +35,8 @@ Cá nhỏ chỉ cần bấm Reel it in là lên, không có thanh trượt. Cá 
 
 - Cửa sổ có số lượt, số cá thành công, số lần thất bại, số lần bấm thanh trượt, tổng Gold, rod còn lại.
 - `logs/cau-ca-<giờ>.csv`: mỗi lượt một dòng (`luot`, `ket_qua`, `vang`, `so_lan_bam`, `giay`). `ket_qua` là `thanh_cong`, `that_bai` hoặc `khong_ro`. Không còn cột bạc.
-- `logs/cau-ca-<giờ>-vet.txt`: vết thời gian từng mẫu mồi và từng cú bấm. Dùng khi cần chỉnh lại độ trễ.
+- `logs/cau-ca-<giờ>-vet.txt`: vết thời gian từng mẫu mồi và từng cú bấm. Dùng khi cần chỉnh lại độ trễ. Cuối mỗi lượt có dòng `lượt N: K lần bấm thanh trượt` và một dòng thông số cho từng lần.
+- `logs/cau-ca-<giờ>-bam.csv`: cùng nội dung, mỗi cú bấm một dòng để tính độ trễ. Lượt không có thanh trượt vẫn có một dòng `lan=0`. Cột giờ là `t_lenh` (lúc phát lệnh), `tu_quang` (kể từ lúc quăng), `tre` (độ trễ đang giả định), `cho` (lệnh cách ảnh cuối bao lâu), `chup_dau`/`chup_cuoi` (cửa sổ chụp ảnh cuối), `mau_sau_*` (mồi ở ảnh ngay sau lệnh). `thanh` là thanh thứ mấy trong lượt, `lan_tren_thanh` là lần bấm thứ mấy trên thanh đó. `ket_qua_bam` là `trung` hoặc `truot`. `err_px` là mồi lúc game nhận trừ tâm vùng đang nhắm (dương là lệch sang phải). Chưa có mẫu quanh lúc đó thì để trống.
 - Ảnh `logs/cau-ca-ketqua-N.png` (12 ảnh đầu mỗi lần chạy) để đối chiếu khi số Gold đọc sai.
 
 ## Ghi chú kỹ thuật
@@ -55,15 +56,19 @@ Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào vi
 
 - Trong một lượt, thanh sau hẹp hơn thanh trước. Thanh đầu thường khoảng 146px. Thanh sau còn khoảng 110px, rồi khoảng 70px. Trượt không làm vùng nhỏ lại. Vùng nhỏ lại sau mỗi lần **trúng**, khi sang thanh kế.
 - Không lấy một độ lệch trung bình rồi cộng vào mọi vùng. Vùng hẹp mà cộng độ lệch của vùng rộng sẽ bấm sát mép và trượt.
-- Điểm nhắm là **giữa vùng đang thấy** (3 lần đọc gần nhất). Bản rộng nhất ghép từ nhiều ảnh chỉ dùng để biết còn cùng một thanh, vì mồi che một mép làm vùng trông hẹp đi.
-- Chỉ bấm khi mồi được dự đoán nằm trong **40% giữa** vùng đó. Ngoài khoảng này thì chờ mẫu mới, không bấm mép.
-- Vùng dưới 120px: chờ ít nhất 6 mẫu và đường mồi phải khớp (sai số ≤ 18px) rồi mới bấm lần đầu. Trượt thì chỉ xê ±0,03 giây. Vùng rộng hơn mới thử ±0,05 đến ±0,15 giây. 0,10 giây là khoảng 25px, đủ để ra khỏi vùng hẹp.
+- Điểm nhắm là **giữa vùng đang thấy** (3 lần đọc gần nhất). Mồi che một mép làm vùng vừa đọc hẹp hơn rõ so với bản rộng nhất của cùng thanh thì nhắm theo bản rộng nhất.
+- Chỉ bấm khi mồi được dự đoán nằm trong **40% giữa** vùng đó. Ngoài khoảng này thì chờ mẫu mới, không bấm mép. Đủ 20 cú có `err_px` thì bán kính này thu lại theo các cú trúng (không rộng hơn 40% nhìn thấy).
+- Mồi đỏ đã chạy trước khi vùng vàng hiện (lúc Reel hoặc cảnh chuyển) thì được ghi lại. Vàng hiện lên là bấm theo quỹ đạo đó, không đo lại từ đầu.
+- Ba ảnh liên tiếp cùng một chiều là đủ vận tốc và pha. Vùng rộng còn có thể bấm từ ảnh thứ 4 nếu đường khớp. Không đợi đủ 5 ảnh.
+- Vùng từ 120px trở lên: lệnh tính với độ trễ 0,24 giây. Vùng hẹp hơn: độ trễ đang học cộng 0,12 giây.
+- Cửa sổ vào vùng còn xa hơn 0,70 giây thì chụp tiếp, chỉnh pha trên đoạn mồi đang chạy, rồi mới bấm. Trượt thì không xóa quỹ đạo: lần mồi quay lại được đặt lịch từ mô hình đang có, và độ trễ được xê tối đa 0,08 giây theo `err_px` của cú vừa trượt.
+- Vùng dưới 120px mà chưa có đoạn thẳng sạch: lần bấm đầu vẫn chờ ít nhất 6 mẫu và sai số ≤ 18px. Trượt thì tính lại từ ảnh mới, không xê ±0,03 giây.
 - Mồi chạy kiểu sóng tam giác, nảy ở khoảng x=199 và x=532 trên ảnh 720px, tốc độ thường 210–250 px/s. Mỗi ảnh chụp mất khoảng 0,45 giây nên không bấm theo ảnh vừa thấy. Bấm đi qua một shell ADB mở sẵn.
 - Trượt không mất rod, chỉ mất thời gian. Hết khoảng 30 giây thì cá thoát, ghi `that_bai`.
 
 ### Độ trễ cú bấm
 
-- Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**.
+- Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**. Vùng rộng không dùng số này để phát lệnh: video 17:29 cho thấy số học được (0,10 giây) tới muộn, nên lệnh của vùng rộng tính với **0,24 giây**. Sau một cú trượt, độ trễ của lần bấm kế trên cùng thanh được xê thêm tối đa 0,08 giây theo `err_px`.
 - Cú trượt không đưa vào tính độ trễ. Lúc trượt gần như mọi độ trễ đều "khớp", trung vị bị kéo về 0 và cú bấm tới sau khi mồi đã ra khỏi vùng.
 - Số đang dùng hiện ở dòng đầu nhật ký. Dữ liệu ở `data/hoc.json` (tối đa 400 cú). Xóa file đó để học lại. `tools/sim_flow.py` không ghi file này.
 - `py -3 tools/phan_tich.py` chấm lại từng cú từ `logs/*-vet.txt`. Không tin dòng TRÚNG/TRƯỢT cũ trong file vết: bản trước có lúc báo trúng khi mồi chỉ che bớt vùng vàng. Thêm `--nhap` để dựng lại `data/hoc.json` từ các file vết.
