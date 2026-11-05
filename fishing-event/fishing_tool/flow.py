@@ -25,8 +25,10 @@ from fishing_tool.vision import (
     Scene,
     Templates,
     fish_tile_point,
+    has_record_banner,
     normalize,
     read_gold,
+    read_record_amount,
     read_multiplier,
     read_rods,
     read_scene,
@@ -413,6 +415,10 @@ class Runner:
             frame = normalize(self.adb.screenshot())
             if read_scene(frame, self.templates).kind != "result":
                 break
+        if not golds and has_record_banner(first):
+            amount = read_record_amount(first)
+            if amount:
+                golds.append(amount)
         self._trace(f"đọc kết quả: gold={golds}")
         return golds
 
@@ -546,8 +552,14 @@ def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
 
 
 def _pick_gold(golds: list[int]) -> int:
-    """Gold hiện thoáng nên hay đọc hụt chữ số. Chỉ nhận số đọc được giống nhau ở ít nhất hai ảnh."""
+    """Chọn số Gold từ vài ảnh kết quả.
+
+    Số chỉ nằm trên ảnh đầu rồi biến, nên một lần đọc từ 10 trở lên vẫn nhận (1.210 đọc được một lần là thật).
+    Một chữ số lẻ (như 9 do tia sáng) chỉ nhận khi lặp lại ở hai ảnh. Nhiều số khác nhau thì lấy số lớn hơn, vì số nhỏ thường là đọc hụt chữ.
+    """
     if not golds:
         return 0
-    best = max(set(golds), key=golds.count)
-    return best if golds.count(best) >= 2 else 0
+    best = max(set(golds), key=lambda value: (golds.count(value), value))
+    if golds.count(best) >= 2 or best >= 10:
+        return best
+    return 0

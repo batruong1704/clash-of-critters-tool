@@ -66,6 +66,12 @@ def _test_memory(check) -> None:
     miss = consistent_latencies(tracker, 1.0, (400, 480), False)
     check("nhớ: L khớp khi trượt không chứa L trúng", miss is not None and not set(miss) & set(good or []), True)
 
+    from fishing_tool.flow import _pick_gold
+
+    check("gold đọc một lần", _pick_gold([1210]), 1210)
+    check("gold một chữ số không nhận", _pick_gold([9]), 0)
+    check("gold lấy số đủ chữ", _pick_gold([210, 1210]), 1210)
+
 
 def main() -> int:
     video = cv2.VideoCapture(str(VIDEO))

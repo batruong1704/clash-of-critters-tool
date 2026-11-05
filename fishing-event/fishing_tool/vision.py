@@ -265,5 +265,17 @@ def read_rods(img) -> int | None:
 
 
 def read_gold(img) -> int | None:
-    """Gold Coin hiện thoáng ở trên con cá khi phá kỷ lục."""
+    """Chữ vàng +Gold hiện thoáng ở trên con cá khi phá kỷ lục."""
     return _read_digits(img, (0.60, 0.30, 0.95, 0.40), (0.017, 0.027), "gold")
+
+
+def has_record_banner(img) -> bool:
+    """Có dòng chữ xanh New Team Record. Lúc đó số trắng dưới con cá chính là Gold vừa nhận."""
+    hsv = cv2.cvtColor(img[190:250, 80:640], cv2.COLOR_BGR2HSV)
+    green = (hsv[..., 0] >= 35) & (hsv[..., 0] <= 95) & (hsv[..., 1] >= 80) & (hsv[..., 2] >= 160)
+    return int(green.sum()) >= 800
+
+
+def read_record_amount(img) -> int | None:
+    """Số trắng cạnh đồng xu trên màn phá kỷ lục, sau khi chữ vàng +Gold đã biến."""
+    return _read_digits(img, (0.34, 0.50, 0.72, 0.60), (0.016, 0.030), "white")

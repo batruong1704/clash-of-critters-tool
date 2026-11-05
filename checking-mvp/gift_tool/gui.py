@@ -52,7 +52,7 @@ LOG_OK = "#0e7a3d"
 LOG_WARN = "#8a5a00"
 LOG_BAD = "#b42318"
 LOG_FONT = ("Consolas", 10)
-OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào", "câu được cá", "trúng")
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào", "câu được cá", "trúng", "thành công")
 FISH_HINT = "Màn dọc. Đang ở sân, Pinball hay Fishing Contest đều được, tool tự đi tới màn câu. Không bấm vào emulator khi tool chạy."
 GIFT_HINT = "Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID."
 RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Ra khỏi mode thì bấm lại nút Goldrush. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
@@ -72,11 +72,13 @@ BAD_MARKS = (
     "không nhận ra",
     "hết rod",
     "không đổi được",
+    "thất bại",
 )
 WARN_MARKS = (
     "trượt",
     "màn thưởng",
     "không thấy màn kết quả",
+    "không rõ",
     "không thấy người chơi",
     "không có quà",
     "sân đứng yên",
@@ -123,6 +125,25 @@ def scan_ids(start: str, count: int) -> list[str]:
     return ids
 
 
+def fish_overview(message: str) -> list[str]:
+    """Dòng hiện ở Tổng quan khi câu cá. Mỗi lượt một dòng, kết quả thụt vào. Rỗng khi dòng chỉ thuộc log chi tiết."""
+    if message.startswith("Lượt "):
+        number = message.split(":", 1)[0].split()[1].split("/")[0]
+        return [f"Lượt {number}"]
+    if message.startswith("Câu được cá"):
+        if "+" in message and "Gold" in message:
+            gold = message.split("+", 1)[1].split()[0].rstrip(".")
+            return [f"{LOG_INDENT}Thành công", f"{LOG_INDENT}+{gold} Gold"]
+        return [f"{LOG_INDENT}Thành công", f"{LOG_INDENT}không Gold"]
+    if message.startswith("Hết giờ"):
+        return [f"{LOG_INDENT}Thất bại, hết giờ", f"{LOG_INDENT}không Gold"]
+    if message.startswith("Không thấy màn kết quả"):
+        return [f"{LOG_INDENT}Không rõ kết quả"]
+    if message.startswith(("Tổng kết", "Đã dừng", "Đã câu", "Hết rod", "Lỗi", "Không đổi", "Không nhận ra", "Bấm quăng")):
+        return [message]
+    return []
+
+
 def log_tone(line: str) -> str:
     """Kết quả tô màu. Dòng UID và tổng kết giữ đen đậm. Bước làm chuyển xám."""
     text = line.strip().lower()
@@ -130,6 +151,10 @@ def log_tone(line: str) -> str:
         return "muted"
     if text.startswith("tổng kết"):
         return "strong"
+    if "không gold" in text:
+        return "muted"
+    if " gold" in text:
+        return "ok"
     if any(mark in text for mark in OK_MARKS):
         return "ok"
     if any(mark in text for mark in BAD_MARKS):
@@ -285,7 +310,7 @@ class App:
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(
             fish_tab,
-            text="Bấm Reel it in, rồi bấm thanh trượt khi mồi vào vùng vàng. Đọc Gold ở màn kết quả. Bảng chi tiết nằm ở fishing-event/logs.",
+            text="Tổng quan chỉ hiện từng lượt, thụt vào là thành công hay thất bại và Gold. Bấm Xem chi tiết log để xem từng bước bấm.",
             style="Hint.TLabel",
             wraplength=520,
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -315,19 +340,29 @@ class App:
         log_card = card(frame)
         log_card.pack(fill="x", pady=(14, 0))
         ttk.Label(log_card, text="Tổng quan", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        log_wrap = ttk.Frame(log_card)
+        log_wrap.pack(fill="x")
         self.log_box = tk.Text(
-            log_card, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
+            log_wrap, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
-        self.log_box.pack(fill="x")
+        log_scroll = ttk.Scrollbar(log_wrap, command=self.log_box.yview)
+        self.log_box.configure(yscrollcommand=log_scroll.set)
+        self.log_box.pack(side="left", fill="both", expand=True)
+        log_scroll.pack(side="right", fill="y")
         self._paint_log(self.log_box)
 
         self.detail_frame = card(self.body)
         detail_card = self.detail_frame
         ttk.Label(detail_card, text="Chi tiết", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        detail_wrap = ttk.Frame(detail_card)
+        detail_wrap.pack(fill="both", expand=True)
         self.detail_box = tk.Text(
-            detail_card, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
+            detail_wrap, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
-        self.detail_box.pack(fill="both", expand=True)
+        detail_scroll = ttk.Scrollbar(detail_wrap, command=self.detail_box.yview)
+        self.detail_box.configure(yscrollcommand=detail_scroll.set)
+        self.detail_box.pack(side="left", fill="both", expand=True)
+        detail_scroll.pack(side="right", fill="y")
         self._paint_log(self.detail_box)
 
     def _segment(self, parent, text: str, value: str, first: bool = False) -> ttk.Radiobutton:
@@ -473,6 +508,7 @@ class App:
             return
         self.fish_mult.set(text)
         self.stop.clear()
+        self._clear(self.log_box)
         self._clear(self.detail_box)
         self._lock()
         self.progress.set(f"Đang câu 0/{casts} lượt")
@@ -587,8 +623,13 @@ class App:
 
             adb = FishAdb()
             serial = adb.ensure_device()
-            self.write(f"Đã nối {serial}")
+            self.write_detail(f"Đã nối {serial}")
             self.root.after(0, lambda s=serial: self._set_device(s))
+
+            def log(message: str):
+                self.write_detail(message)
+                for line in fish_overview(message):
+                    self.write(line)
 
             def show(stats):
                 rods = "?" if stats.rods is None else stats.rods
@@ -598,11 +639,12 @@ class App:
                 )
                 self.root.after(0, lambda t=text: self.progress.set(t))
 
-            runner = FishRunner(adb, self.write, self.stop, casts, multiplier, on_stats=show)
+            runner = FishRunner(adb, log, self.stop, casts, multiplier, on_stats=show)
             stats = runner.run()
             show(stats)
         except Exception as exc:
             self.write(f"Lỗi: {exc}")
+            self.write_detail(f"Lỗi: {exc}")
             self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
         finally:
             self.root.after(0, self._unlock)
