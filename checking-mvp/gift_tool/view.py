@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+import winreg
+from tkinter import filedialog, messagebox, ttk
+
+from gift_tool.paths import LOGS, REPO
 
 WINDOW_WIDTH = 1040
 WINDOW_HEIGHT = 700
@@ -14,9 +18,76 @@ HINT_WRAP = 250
 ID_FONT = ("Consolas", 12)
 LOG_FONT = ("Consolas", 10)
 UI_FONT = ("Segoe UI", 10)
+MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
+APP_VERSION = "1.2.0"
+_CACHE_KEEP = {"cua-so.json"}
+_CACHE_DIRS = (
+    LOGS,
+    REPO / "fishing-event" / "logs",
+    REPO / "auto-join-rally" / "logs",
+)
+
+
+def _windows_dark() -> bool:
+    """Windows đang để ứng dụng màu tối hay không."""
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            value, _kind = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return int(value) == 0
+    except OSError:
+        return False
+
+
+def _resolved_theme(mode: str) -> str:
+    if mode == "dark":
+        return "dark"
+    if mode == "system":
+        return "dark" if _windows_dark() else "light"
+    return "light"
+
+
+def _cache_bytes() -> int:
+    total = 0
+    for folder in _CACHE_DIRS:
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            if not path.is_file() or path.name in _CACHE_KEEP:
+                continue
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _delete_cache() -> None:
+    for folder in _CACHE_DIRS:
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            if not path.is_file() or path.name in _CACHE_KEEP:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+
+
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        number, unit = size / 1024, "KB"
+    else:
+        number, unit = size / (1024 * 1024), "MB"
+    return f"{number:.1f} {unit}".replace(".", ",")
 
 LIGHT = {
     "bg": "#f3f4f6",
@@ -143,10 +214,12 @@ class MainView:
         self.root = root
         self.presenter = presenter
         self.max_gifts = max_gifts
+        self.theme_mode = "light"
         self.theme_name = "light"
         self.colors = dict(LIGHT)
         self._ids_guard = False
         self._tools_open = False
+        self._settings_open = False
         self._row_seq = 0
         self._bar_current = 0
         self._bar_total = 0
@@ -180,8 +253,11 @@ class MainView:
         self.show_mode("fish")
         self.root.bind("<Escape>", lambda _event: presenter.on_escape())
         self.root.bind("<Button-1>", self._dismiss_tools, add="+")
+        self.root.bind("<FocusIn>", self._follow_system_theme, add="+")
 
     def _build(self, scan_max: int, fish_max: int, fish_multipliers: tuple[str, ...]) -> None:
+        self.debug_var = tk.BooleanVar(value=False)
+        self.auto_var = tk.BooleanVar(value=True)
         self.body = tk.Frame(self.root)
         self.body.pack(fill="both", expand=True, padx=12, pady=12)
         self.body.columnconfigure(0, minsize=SIDE_WIDTH)
@@ -193,8 +269,7 @@ class MainView:
         header = self.header
         self.title_label = tk.Label(header, textvariable=self.title_var, font=TITLE_FONT, anchor="w")
         self.title_label.pack(side="left")
-        self.theme_btn = tk.Button(header, text="Đổi sáng/tối", font=UI_FONT, relief="flat", bd=0, command=self.toggle_theme, cursor="hand2")
-        self.theme_btn.pack(side="right")
+        self._build_settings(header)
         self.conn = tk.Frame(header, cursor="hand2")
         self.conn.pack(side="right", padx=(0, 8))
         self.conn_dot = tk.Label(self.conn, text="●", font=("Segoe UI", 8))
@@ -284,6 +359,7 @@ class MainView:
             caption = tk.Label(box, text=name, font=("Segoe UI", 9), anchor="w")
             caption.pack(anchor="w", padx=10, pady=(0, 8))
             self.tiles[name] = (box, value, caption)
+        self._tile_tones = {name: "gold" if name == "Gold" else "text" for name in self.tile_order}
 
         self.views = tk.Frame(self.main)
         self.views.grid(row=3, column=0, sticky="nsew", padx=14, pady=(12, 14))
@@ -310,27 +386,125 @@ class MainView:
         self.log_pane = tk.Frame(views, highlightthickness=1)
         self.log_pane.columnconfigure(0, weight=1)
         self.log_pane.rowconfigure(0, weight=1)
-        self.log_box = tk.Text(self.log_pane, font=LOG_FONT, wrap="word", relief="flat", bd=0, state="disabled")
-        log_scroll = ttk.Scrollbar(self.log_pane, command=self.log_box.yview)
-        self.log_box.configure(yscrollcommand=log_scroll.set)
-        self.log_box.grid(row=0, column=0, sticky="nsew")
-        log_scroll.grid(row=0, column=1, sticky="ns")
-        self.detail_box = self.log_box
+        self.log_scroll = ttk.Scrollbar(self.log_pane)
+        self._new_log_box()
+        self.log_scroll.grid(row=0, column=1, sticky="ns")
 
         tools = tk.Frame(views)
         self.log_tools = tools
-        self.debug_var = tk.BooleanVar(value=False)
-        self.auto_var = tk.BooleanVar(value=True)
-        self.debug_check = tk.Checkbutton(tools, text="Hiện chi tiết bấm", font=UI_FONT, variable=self.debug_var, command=self._toggle_debug)
-        self.debug_check.pack(side="left")
-        self.auto_check = tk.Checkbutton(tools, text="Tự cuộn", font=UI_FONT, variable=self.auto_var, command=self._toggle_auto)
-        self.auto_check.pack(side="left", padx=(10, 0))
         self.copy_btn = tk.Button(tools, text="Copy", font=UI_FONT, relief="flat", bd=0, command=self.copy_log, cursor="hand2")
         self.copy_btn.pack(side="right")
         self.clear_btn = tk.Button(tools, text="Xóa", font=UI_FONT, relief="flat", bd=0, command=self.clear_log, cursor="hand2")
         self.clear_btn.pack(side="right", padx=(0, 6))
         self._view_name = "result"
         self._show_view("result")
+
+    def _build_settings(self, header: tk.Frame) -> None:
+        icon_font, icon = self._settings_icon()
+        self.settings_btn = tk.Button(
+            header,
+            text=icon,
+            font=icon_font,
+            relief="flat",
+            bd=0,
+            command=self._toggle_settings,
+            cursor="hand2",
+            padx=10,
+            pady=2,
+        )
+        self.settings_btn.pack(side="right")
+
+        menu = tk.Frame(self.body, highlightthickness=1)
+        self.settings_menu = menu
+        self.settings_title = tk.Label(menu, text="Cài đặt", font=("Segoe UI", 12, "bold"), anchor="w")
+        self.settings_title.pack(fill="x", padx=14, pady=(12, 10))
+        self.settings_rule = self._settings_rule(menu)
+
+        body = tk.Frame(menu)
+        self.settings_body = body
+        body.pack(fill="x", padx=14, pady=(12, 4))
+
+        self.theme_caption = tk.Label(body, text="Giao diện", font=("Segoe UI", 9), anchor="w")
+        self.theme_caption.pack(anchor="w")
+        choice = tk.Frame(body)
+        choice.pack(fill="x", pady=(6, 14))
+        choice.columnconfigure((0, 1, 2), weight=1, uniform="theme")
+        self._theme_choice = choice
+        self.theme_light_btn = self._theme_button(choice, "Sáng", "light")
+        self.theme_dark_btn = self._theme_button(choice, "Tối", "dark")
+        self.theme_system_btn = self._theme_button(choice, "Theo máy", "system")
+        self.theme_light_btn.grid(row=0, column=0, sticky="nsew")
+        self.theme_dark_btn.grid(row=0, column=1, sticky="nsew", padx=6)
+        self.theme_system_btn.grid(row=0, column=2, sticky="nsew")
+
+        self.log_caption = tk.Label(body, text="Log", font=("Segoe UI", 9), anchor="w")
+        self.log_caption.pack(anchor="w")
+        self.auto_row, self.auto_label, self.auto_check = self._setting_switch(
+            body, "Tự cuộn xuống cuối", self.auto_var, self._toggle_auto,
+        )
+        self.debug_row, self.debug_label, self.debug_check = self._setting_switch(
+            body, "Hiện chi tiết bấm", self.debug_var, self._toggle_debug,
+        )
+
+        self.data_caption = tk.Label(body, text="Dữ liệu", font=("Segoe UI", 9), anchor="w")
+        self.data_caption.pack(anchor="w", pady=(12, 0))
+        self.open_log_btn = self._settings_action(body, "Mở thư mục log", self._open_log_folder)
+        self.purge_btn = self._settings_action(body, "Xóa cache", self.purge_log)
+        self._refresh_cache_label()
+
+        self.settings_rule_bottom = self._settings_rule(menu)
+        self.version_label = tk.Label(menu, text=f"Phiên bản {APP_VERSION}", font=("Segoe UI", 9), anchor="w")
+        self.version_label.pack(fill="x", padx=14, pady=(8, 12))
+
+    def _settings_rule(self, parent: tk.Frame) -> tk.Frame:
+        rule = tk.Frame(parent, height=1, bd=0, highlightthickness=0)
+        rule.pack(fill="x")
+        rule.pack_propagate(False)
+        return rule
+
+    def _theme_button(self, parent: tk.Frame, text: str, mode: str) -> tk.Button:
+        return tk.Button(
+            parent, text=text, font=UI_FONT, relief="flat", bd=0, padx=4, pady=4, cursor="hand2",
+            command=lambda: self._pick_theme(mode),
+        )
+
+    def _setting_switch(self, parent: tk.Frame, text: str, variable: tk.BooleanVar, command):
+        row = tk.Frame(parent)
+        row.pack(fill="x", pady=(6, 0))
+        label = tk.Label(row, text=text, font=UI_FONT, anchor="w")
+        label.pack(side="left")
+        check = tk.Checkbutton(
+            row, text="", variable=variable, command=command,
+            bd=0, highlightthickness=0, padx=0, pady=0, cursor="hand2",
+        )
+        check.pack(side="right")
+        return row, label, check
+
+    def _settings_action(self, parent: tk.Frame, text: str, command) -> tk.Button:
+        button = tk.Button(
+            parent, text=text, font=UI_FONT, relief="flat", bd=0, anchor="w",
+            cursor="hand2", highlightthickness=1, padx=10, command=command,
+        )
+        button.pack(fill="x", pady=(6, 0), ipady=4)
+        return button
+
+    def _settings_icon(self) -> tuple[tuple[str, int], str]:
+        import tkinter.font as tkfont
+
+        if "Segoe MDL2 Assets" in set(tkfont.families()):
+            return ("Segoe MDL2 Assets", 14), "\uE713"
+        return ("Segoe UI Symbol", 14), "\u2699"
+
+    def _new_log_box(self) -> None:
+        """Tạo lại ô log. Hủy ô cũ để Tcl trả bộ nhớ của toàn bộ dòng đã ghi."""
+        old = getattr(self, "log_box", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+        self.log_box = tk.Text(self.log_pane, font=LOG_FONT, wrap="word", relief="flat", bd=0, state="disabled")
+        self.log_scroll.configure(command=self.log_box.yview)
+        self.log_box.configure(yscrollcommand=self.log_scroll.set)
+        self.log_box.grid(row=0, column=0, sticky="nsew")
+        self.detail_box = self.log_box
 
     def _mode_tab(self, parent, text: str, mode: str):
         cell = tk.Frame(parent)
@@ -470,9 +644,11 @@ class MainView:
             box, value, _caption = self.tiles[name]
             if name in names:
                 box.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
+                tone = "gold" if name == "Gold" else "text"
+                self._tile_tones[name] = tone
                 value.configure(
                     text="—" if name == "Rod còn" else "0",
-                    fg=self.colors["gold"] if name == "Gold" else self.colors["text"],
+                    fg=self.colors[tone],
                 )
                 column += 1
             else:
@@ -613,9 +789,17 @@ class MainView:
             stamp = self._clock()
             self.log_box.configure(state="normal")
             start = self.log_box.index("end-1c")
-            self.log_box.insert("end", f"[{stamp}] ", "time")
-            self._insert_message(message, chosen)
-            self.log_box.insert("end", "\n")
+            if chosen == "turn" and message.startswith("Lượt "):
+                head, sep, tail = message.partition(":")
+                self.log_box.insert("end", head.strip() + "\n", ("turn", "mid"))
+                if sep and tail.strip():
+                    self.log_box.insert("end", f"[{stamp}] ", "time")
+                    self._insert_message(tail.strip(), "text")
+                    self.log_box.insert("end", "\n")
+            else:
+                self.log_box.insert("end", f"[{stamp}] ", "time")
+                self._insert_message(message, chosen)
+                self.log_box.insert("end", "\n")
             if chosen == "dbg" and not self._show_debug:
                 self.log_box.tag_add("hidden", start, "end-1c")
             if self._auto_scroll:
@@ -635,6 +819,37 @@ class MainView:
             self.log_box.configure(state="normal")
             self.log_box.delete("1.0", "end")
             self.log_box.configure(state="disabled")
+
+        self.invoke(apply)
+
+    def purge_log(self) -> None:
+        """Xóa file log đã sinh và log đang hiện. Giữ file cài đặt."""
+        self._close_settings()
+        if self.presenter.running:
+            self.toast("Đang chạy, hãy dừng trước khi xóa cache.")
+            return
+        size = _format_size(_cache_bytes())
+        agreed = messagebox.askyesno(
+            "Xóa cache",
+            f"Xóa cache ({size})? Ảnh chụp và file log sẽ bị xóa. Cài đặt giữ nguyên.",
+            parent=self.root,
+        )
+        if not agreed:
+            return
+        _delete_cache()
+        self._release_log_memory()
+
+    def _release_log_memory(self) -> None:
+        def apply() -> None:
+            self._new_log_box()
+            children = self.results.get_children()
+            for start in range(0, len(children), 400):
+                self.results.delete(*children[start : start + 400])
+            self._row_seq = 0
+            self._paint()
+            gc.collect()
+            self.toast("Đã xóa cache.")
+            self._refresh_cache_label()
 
         self.invoke(apply)
 
@@ -715,15 +930,36 @@ class MainView:
             var.trace_add("write", lambda *_args: callback())
 
     def toggle_theme(self) -> None:
-        self.theme_name = "dark" if self.theme_name == "light" else "light"
-        self.colors = dict(DARK if self.theme_name == "dark" else LIGHT)
-        self._paint()
+        self._pick_theme("dark" if self.theme_name == "light" else "light")
+
+    def _pick_theme(self, name: str) -> None:
+        if name == self.theme_mode:
+            return
+        self.set_theme(name)
         self.presenter.on_theme()
 
     def set_theme(self, name: str) -> None:
-        self.theme_name = "dark" if name == "dark" else "light"
+        self.theme_mode = name if name in ("light", "dark", "system") else "light"
+        self.theme_name = _resolved_theme(self.theme_mode)
         self.colors = dict(DARK if self.theme_name == "dark" else LIGHT)
         self._paint()
+
+    def _follow_system_theme(self, _event=None) -> None:
+        if self.theme_mode != "system":
+            return
+        applied = _resolved_theme("system")
+        if applied == self.theme_name:
+            return
+        self.theme_name = applied
+        self.colors = dict(DARK if applied == "dark" else LIGHT)
+        self._paint()
+
+    def _open_log_folder(self) -> None:
+        self._close_settings()
+        self.presenter.open_logs()
+
+    def _refresh_cache_label(self) -> None:
+        self.purge_btn.configure(text=f"Xóa cache ({_format_size(_cache_bytes())})")
 
     def invoke(self, fn) -> None:
         """Việc đụng widget từ luồng chạy phải xếp hàng về luồng cửa sổ."""
@@ -749,6 +985,7 @@ class MainView:
         if self._tools_open:
             self._close_tools()
             return
+        self._close_settings()
         self.tool_menu.place(in_=self.tools_btn, relx=0, rely=0, anchor="sw", relwidth=1.0)
         self.tool_menu.lift()
         self._tools_open = True
@@ -757,15 +994,34 @@ class MainView:
         self.tool_menu.place_forget()
         self._tools_open = False
 
-    def _dismiss_tools(self, event) -> None:
-        if not self._tools_open:
+    def _toggle_settings(self) -> None:
+        if self._settings_open:
+            self._close_settings()
             return
+        self._close_tools()
+        self._refresh_cache_label()
+        self.settings_menu.place(in_=self.settings_btn, relx=1.0, rely=1.0, anchor="ne", y=6, width=320)
+        self.settings_menu.lift()
+        self._settings_open = True
+
+    def _close_settings(self) -> None:
+        self.settings_menu.place_forget()
+        self._settings_open = False
+
+    def _dismiss_tools(self, event) -> None:
         widget = event.widget
+        inside_tools = False
+        inside_settings = False
         while widget is not None:
             if widget in (self.tool_menu, self.tools_btn):
-                return
+                inside_tools = True
+            if widget in (self.settings_menu, self.settings_btn):
+                inside_settings = True
             widget = getattr(widget, "master", None)
-        self._close_tools()
+        if self._tools_open and not inside_tools:
+            self._close_tools()
+        if self._settings_open and not inside_settings:
+            self._close_settings()
 
     def _show_view(self, name: str) -> None:
         colors = self.colors
@@ -799,9 +1055,11 @@ class MainView:
     def _toggle_debug(self) -> None:
         self._show_debug = bool(self.debug_var.get())
         self.log_box.tag_configure("hidden", elide=not self._show_debug)
+        self.presenter.on_option_changed()
 
     def _toggle_auto(self) -> None:
         self._auto_scroll = bool(self.auto_var.get())
+        self.presenter.on_option_changed()
 
     def _ids_changed(self, _event=None) -> None:
         if self._ids_guard:
@@ -818,6 +1076,7 @@ class MainView:
         if name not in self.tiles:
             return
         _box, label, _caption = self.tiles[name]
+        self._tile_tones[name] = tone
         label.configure(text=value, fg=self.colors.get(tone, self.colors["text"]))
 
     def _set_bar(self, label: str, current: int, total: int) -> None:
@@ -851,6 +1110,62 @@ class MainView:
         now = datetime.datetime.now()
         return f"{now:%H:%M:%S}"
 
+    def _paint_settings(self, colors: dict[str, str]) -> None:
+        self.settings_btn.configure(
+            bg=colors["panel"],
+            fg=colors["text"],
+            activebackground=colors["tile"],
+            activeforeground=colors["text"],
+            highlightbackground=colors["line"],
+            highlightthickness=1,
+        )
+        self.settings_menu.configure(bg=colors["panel"], highlightbackground=colors["line"])
+        self.settings_body.configure(bg=colors["panel"])
+        self.settings_title.configure(bg=colors["panel"], fg=colors["text"])
+        self.version_label.configure(bg=colors["panel"], fg=colors["mute"])
+        for rule in (self.settings_rule, self.settings_rule_bottom):
+            rule.configure(bg=colors["line"])
+        for caption in (self.theme_caption, self.log_caption, self.data_caption):
+            caption.configure(bg=colors["panel"], fg=colors["mute"])
+        self._theme_choice.configure(bg=colors["panel"])
+        for name, button in (
+            ("light", self.theme_light_btn),
+            ("dark", self.theme_dark_btn),
+            ("system", self.theme_system_btn),
+        ):
+            on = self.theme_mode == name
+            button.configure(
+                bg=colors["acc"] if on else colors["tile"],
+                fg=colors["acc_t"] if on else colors["text"],
+                activebackground=colors["acc"] if on else colors["tile"],
+                activeforeground=colors["acc_t"] if on else colors["text"],
+                highlightthickness=0,
+            )
+        for row, label, check in (
+            (self.auto_row, self.auto_label, self.auto_check),
+            (self.debug_row, self.debug_label, self.debug_check),
+        ):
+            row.configure(bg=colors["panel"])
+            label.configure(bg=colors["panel"], fg=colors["text"])
+            check.configure(
+                bg=colors["panel"],
+                fg=colors["text"],
+                activebackground=colors["panel"],
+                activeforeground=colors["text"],
+                selectcolor=colors["panel"],
+                highlightthickness=0,
+            )
+        for button in (self.open_log_btn, self.purge_btn):
+            button.configure(
+                bg=colors["panel"],
+                fg=colors["text"],
+                activebackground=colors["tile"],
+                activeforeground=colors["text"],
+                highlightbackground=colors["line"],
+                highlightthickness=1,
+                highlightcolor=colors["line"],
+            )
+
     def _paint(self) -> None:
         colors = self.colors
         running = self.presenter.running
@@ -860,7 +1175,7 @@ class MainView:
         self.title_label.configure(bg=colors["bg"], fg=colors["text"])
         self.mode_tabs.configure(bg=colors["panel"])
         self.view_switch.configure(bg=colors["panel"])
-        self.theme_btn.configure(bg=colors["panel"], fg=colors["text"], highlightbackground=colors["line"])
+        self._paint_settings(colors)
         self.conn.configure(bg=colors["panel"], highlightbackground=colors["line"], highlightthickness=1)
         self.conn_label.configure(bg=colors["panel"], fg=colors["text"])
         self.conn_dot.configure(bg=colors["panel"], fg=colors["err"] if self.device_var.get() == "Chưa nối" else colors["ok"])
@@ -884,10 +1199,9 @@ class MainView:
         self.tiles_row.configure(bg=colors["panel"])
         for name, (box, value, caption) in self.tiles.items():
             box.configure(bg=colors["tile"], highlightbackground=colors["line"])
-            value.configure(bg=colors["tile"])
+            tone = self._tile_tones.get(name, "text")
+            value.configure(bg=colors["tile"], fg=colors.get(tone, colors["text"]))
             caption.configure(bg=colors["tile"], fg=colors["mute"])
-            if name == "Gold":
-                value.configure(fg=colors["gold"])
         self._mark_mode(self.mode_var.get())
         for button in self._mode_buttons.values():
             button.configure(bg=colors["panel"], activebackground=colors["panel"])
@@ -897,6 +1211,7 @@ class MainView:
         self.log_box.tag_configure("time", foreground=colors["dbg"])
         self.log_box.tag_configure("text", foreground=colors["text"])
         self.log_box.tag_configure("turn", foreground=colors["text"], font=(LOG_FONT[0], LOG_FONT[1], "bold"))
+        self.log_box.tag_configure("mid", justify="center")
         self.log_box.tag_configure("ok", foreground=colors["ok"])
         self.log_box.tag_configure("gold", foreground=colors["gold"])
         self.log_box.tag_raise("gold")
@@ -910,10 +1225,10 @@ class MainView:
         self.load_btn.configure(bg=colors["panel"], fg=colors["text"], highlightbackground=colors["line"], highlightthickness=1)
         self.clear_btn.configure(bg=colors["panel"], fg=colors["text"], highlightbackground=colors["line"], highlightthickness=1)
         self.copy_btn.configure(bg=colors["panel"], fg=colors["text"], highlightbackground=colors["line"], highlightthickness=1)
-        self.debug_check.configure(bg=colors["panel"], fg=colors["text"], activebackground=colors["panel"], selectcolor=colors["panel"])
-        self.auto_check.configure(bg=colors["panel"], fg=colors["text"], activebackground=colors["panel"], selectcolor=colors["panel"])
         self.log_tools.configure(bg=colors["panel"])
+        # Khung form không tô sẽ giữ nền xám của Windows. Nền đó lộ thành ô trắng cạnh nhãn ngắn, nhất là khi đổi tối.
         for page in (self.fish_page, self.rally_page, self.scan_page, self.list_page):
+            page.configure(bg=colors["panel"])
             self._paint_children(page, colors)
         self._paint_inputs()
         self.style.configure(
@@ -991,10 +1306,29 @@ class MainView:
             bordercolor=[("focus", colors["acc"])],
         )
         picked = "#ffffff" if self.theme_name == "light" else colors["acc_t"]
+        self.root.option_add("*TCombobox*Listbox.font", "{Segoe UI} 18")
         self.root.option_add("*TCombobox*Listbox.background", panel)
         self.root.option_add("*TCombobox*Listbox.foreground", text)
         self.root.option_add("*TCombobox*Listbox.selectBackground", colors["acc"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", picked)
+        self._style_multiplier_list(panel, text, colors["acc"], picked)
+
+    def _style_multiplier_list(self, panel: str, text: str, accent: str, picked: str) -> None:
+        """Danh sách hệ số mặc định chỉ cao khoảng 15px mỗi dòng, khó bấm."""
+        combo = self.fish_mult
+        pop = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        combo.tk.call(
+            f"{pop}.f.l",
+            "configure",
+            "-font", MULT_LIST_FONT,
+            "-background", panel,
+            "-foreground", text,
+            "-selectbackground", accent,
+            "-selectforeground", picked,
+            "-activestyle", "none",
+            "-borderwidth", 0,
+            "-highlightthickness", 0,
+        )
 
     def _paint_children(self, widget: tk.Misc, colors: dict[str, str]) -> None:
         for child in widget.winfo_children():

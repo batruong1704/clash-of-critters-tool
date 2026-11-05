@@ -263,10 +263,14 @@ class Presenter:
         self.view.set_locked(True)
 
     def _unlock(self) -> None:
+        finished = not self.stop.is_set()
+
         def apply() -> None:
             self.running = False
             self.view.set_locked(False)
             self.refresh_action()
+            if finished:
+                self.view.play_done()
 
         self.view.invoke(apply)
 
@@ -518,8 +522,14 @@ class Presenter:
         mode = data.get("mode")
         if mode in ("list", "scan", "rally", "fish"):
             self.select(mode)
+        if "autoscroll" in data:
+            self.view.auto_var.set(bool(data["autoscroll"]))
+            self.view._toggle_auto()
+        if "debug" in data:
+            self.view.debug_var.set(bool(data["debug"]))
+            self.view._toggle_debug()
         theme = data.get("theme")
-        if theme in ("light", "dark"):
+        if theme in ("light", "dark", "system"):
             self.view.set_theme(theme)
 
     def _save_settings(self) -> None:
@@ -527,7 +537,9 @@ class Presenter:
             "mode": self.mode,
             "casts": self.view.fish_casts_text().strip(),
             "multiplier": self.view.fish_multiplier_text().strip().lower().lstrip("x") or "1",
-            "theme": self.view.theme_name,
+            "theme": self.view.theme_mode,
+            "autoscroll": bool(self.view.auto_var.get()),
+            "debug": bool(self.view.debug_var.get()),
         }
         try:
             self._settings_path.parent.mkdir(parents=True, exist_ok=True)
