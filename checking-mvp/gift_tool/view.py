@@ -184,6 +184,165 @@ def log_tone(line: str) -> str:
     return "text"
 
 
+class UpdateDialog:
+    """Hộp thoại cập nhật. Thanh tiến trình chỉ hiện khi thật sự có bản mới để tải."""
+
+    def __init__(self, view: "MainView") -> None:
+        self.view = view
+        self.alive = True
+        self.showing_progress = False
+        self._pct = 0
+        self._placed = False
+        colors = view.colors
+        top = tk.Toplevel(view.root)
+        self.top = top
+        top.title("Cập nhật")
+        top.configure(bg=colors["panel"])
+        top.resizable(False, False)
+        top.transient(view.root)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        self.body = tk.Frame(top, bg=colors["panel"], padx=18, pady=16)
+        self.body.pack(fill="both", expand=True)
+        self.heading = tk.Label(
+            self.body,
+            text="Cập nhật",
+            bg=colors["panel"],
+            fg=colors["text"],
+            font=("Segoe UI", 14, "bold"),
+            anchor="w",
+        )
+        self.heading.pack(fill="x")
+        self.status = tk.Label(
+            self.body,
+            text="Đang kiểm tra GitHub…",
+            bg=colors["panel"],
+            fg=colors["text"],
+            font=UI_FONT,
+            wraplength=320,
+            justify="left",
+            anchor="w",
+        )
+        self.status.pack(fill="x", pady=(8, 0))
+        self.progress = tk.Frame(self.body, bg=colors["panel"])
+        self.bar = tk.Canvas(self.progress, width=260, height=12, highlightthickness=0, bd=0, bg=colors["tile"])
+        self.bar.pack(side="left", fill="x", expand=True)
+        self.percent = tk.Label(
+            self.progress,
+            text="0%",
+            bg=colors["panel"],
+            fg=colors["mute"],
+            font=UI_FONT,
+            width=5,
+            anchor="e",
+        )
+        self.percent.pack(side="right", padx=(10, 0))
+        self.bar.bind("<Configure>", lambda _event: self._draw())
+        self.close_btn = tk.Button(
+            self.body,
+            text="Đóng",
+            command=self.close,
+            font=UI_FONT,
+            bd=0,
+            padx=12,
+            pady=8,
+            cursor="hand2",
+        )
+        self.close_btn.pack(fill="x", pady=(14, 0))
+        self.apply_colors()
+        self._fit()
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        top.lift()
+        top.focus_force()
+
+    def apply_colors(self) -> None:
+        if not self.alive:
+            return
+        colors = self.view.colors
+        self.top.configure(bg=colors["panel"])
+        self.body.configure(bg=colors["panel"])
+        self.heading.configure(bg=colors["panel"], fg=colors["text"])
+        self.status.configure(bg=colors["panel"], fg=colors["text"])
+        self.progress.configure(bg=colors["panel"])
+        self.percent.configure(bg=colors["panel"], fg=colors["mute"])
+        self.close_btn.configure(
+            bg=colors["acc"],
+            fg=colors["acc_t"],
+            activebackground=colors["acc"],
+            activeforeground=colors["acc_t"],
+            highlightthickness=0,
+        )
+        self._draw()
+
+    def set_status(self, text: str) -> None:
+        if not self.alive:
+            return
+        self.status.configure(text=text)
+        self._fit()
+
+    def set_progress(self, percent: int) -> None:
+        if not self.alive:
+            return
+        percent = max(0, min(100, int(percent)))
+        first = not self.showing_progress
+        if first:
+            self.progress.pack(fill="x", pady=(12, 0), before=self.close_btn)
+            self.showing_progress = True
+        self._pct = percent
+        self.percent.configure(text=f"{percent}%")
+        self._draw()
+        if first:
+            self._fit()
+
+    def _draw(self) -> None:
+        if not self.alive:
+            return
+        width = max(self.bar.winfo_width(), 1)
+        height = 12
+        colors = self.view.colors
+        self.bar.delete("all")
+        self.bar.configure(bg=colors["tile"])
+        self.bar.create_rectangle(0, 0, width, height, fill=colors["tile"], outline=colors["line"])
+        if self._pct > 0:
+            filled = max(2, int(width * self._pct / 100))
+            self.bar.create_rectangle(0, 0, filled, height, fill=colors["acc"], outline="")
+
+    def _fit(self) -> None:
+        if not self.alive:
+            return
+        self.top.update_idletasks()
+        width = 360
+        height = max(self.top.winfo_reqheight(), 1)
+        if not self._placed:
+            root = self.view.root
+            x = root.winfo_rootx() + max(0, (root.winfo_width() - width) // 2)
+            y = root.winfo_rooty() + max(0, (root.winfo_height() - height) // 2)
+            self._placed = True
+            self.top.geometry(f"{width}x{height}+{x}+{y}")
+            return
+        self.top.geometry(f"{width}x{height}")
+
+    def lift(self) -> None:
+        if not self.alive:
+            return
+        self.top.lift()
+        self.top.focus_force()
+
+    def close(self) -> None:
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        self.top.destroy()
+        if self.view._update_dialog is self:
+            self.view._update_dialog = None
+
+
 def fish_level(message: str) -> str:
     """Mức dòng log câu cá. Chi tiết cú bấm để ẩn cho đến khi bật hiện."""
     if message.startswith("Lượt "):
@@ -221,6 +380,8 @@ class MainView:
         self._ids_guard = False
         self._tools_open = False
         self._settings_open = False
+        self._update_busy = False
+        self._update_dialog: UpdateDialog | None = None
         self._row_seq = 0
         self._bar_current = 0
         self._bar_total = 0
@@ -460,6 +621,7 @@ class MainView:
         self.data_caption.pack(anchor="w", pady=(12, 0))
         self.open_log_btn = self._settings_action(body, "Mở thư mục log", self._open_log_folder)
         self.purge_btn = self._settings_action(body, "Xóa cache", self.purge_log)
+        self.update_btn = self._settings_action(body, "Cập nhật", self._update_app)
         self._refresh_cache_label()
 
         self.settings_rule_bottom = self._settings_rule(menu)
@@ -992,6 +1154,30 @@ class MainView:
         self._close_settings()
         self.presenter.open_logs()
 
+    def _update_app(self) -> None:
+        self._close_settings()
+        self.presenter.update_from_github()
+
+    def set_update_busy(self, busy: bool) -> None:
+        self._update_busy = busy
+
+        def apply() -> None:
+            self.update_btn.configure(
+                state="disabled" if busy else "normal",
+                text="Đang cập nhật…" if busy else "Cập nhật",
+            )
+
+        self.invoke(apply)
+
+    def open_update_dialog(self) -> UpdateDialog:
+        current = self._update_dialog
+        if current is not None and current.alive:
+            current.lift()
+            return current
+        dialog = UpdateDialog(self)
+        self._update_dialog = dialog
+        return dialog
+
     def _refresh_cache_label(self) -> None:
         self.purge_btn.configure(text=f"Xóa cache ({_format_size(_cache_bytes())})")
 
@@ -1190,7 +1376,7 @@ class MainView:
                 selectcolor=colors["panel"],
                 highlightthickness=0,
             )
-        for button in (self.open_log_btn, self.purge_btn):
+        for button in (self.open_log_btn, self.purge_btn, self.update_btn):
             button.configure(
                 bg=colors["panel"],
                 fg=colors["text"],
@@ -1200,10 +1386,16 @@ class MainView:
                 highlightthickness=1,
                 highlightcolor=colors["line"],
             )
+        self.update_btn.configure(
+            state="disabled" if self._update_busy else "normal",
+            text="Đang cập nhật…" if self._update_busy else "Cập nhật",
+        )
 
     def _paint(self) -> None:
         colors = self.colors
         running = self.presenter.running
+        if self._update_dialog is not None and self._update_dialog.alive:
+            self._update_dialog.apply_colors()
         self.root.configure(bg=colors["bg"])
         self.body.configure(bg=colors["bg"])
         self.header.configure(bg=colors["bg"])

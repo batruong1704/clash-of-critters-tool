@@ -70,7 +70,15 @@ def _test_memory(check) -> None:
     miss = consistent_latencies(tracker, 1.0, (400, 480), False)
     check("nhớ: L khớp khi trượt không chứa L trúng", miss is not None and not set(miss) & set(good or []), True)
 
-    from fishing_tool.flow import _pick_gold
+    from fishing_tool.flow import HIT_SETTLE, _hold_hit, _pick_gold, _same_zone
+
+    check("cùng thanh khi mép giữ nguyên", _same_zone((237, 282), (236, 382)), True)
+    check("cùng thanh khi cả hai mép trôi 27px", _same_zone((290, 373), (317, 400)), True)
+    check("thanh mới gần như không chồng", _same_zone((219, 329), (326, 473)), False)
+    check("thanh mới lệch tâm xa", _same_zone((383, 492), (284, 430)), False)
+    check("chờ xác nhận khi mồi còn trong vùng", _hold_hit(11.2, 10.0, -8, 73), True)
+    check("hết giờ chờ thì được gọi trượt", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, -8, 73), False)
+    check("mồi ra khỏi vùng thì không chờ", _hold_hit(11.2, 10.0, -78, 36), False)
 
     check("gold đọc một lần", _pick_gold([1210]), 1210)
     check("gold một chữ số không nhận", _pick_gold([9]), 0)

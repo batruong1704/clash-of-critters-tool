@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 
 from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS
-from gift_tool.paths import LOGS
+from gift_tool.paths import LOGS, REPO
 from gift_tool.model import (
     FISHING_CASTS_DEFAULT,
     FISHING_CASTS_MAX,
@@ -22,6 +25,162 @@ from gift_tool.model import (
     scan_ids,
 )
 from gift_tool.view import MainView, fish_level
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Gọi git không mở cửa sổ và không chờ hộp nhập mật khẩu."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.run(
+        [shutil.which("git") or "git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=90,
+        env=env,
+        creationflags=flags,
+    )
+
+
+def _one_line(text: str) -> str:
+    line = " ".join(text.strip().split())
+    return line[:160] if line else "git không trả lời"
+
+
+_PROGRESS_LINE = re.compile(
+    r"(counting|compressing|receiving|resolving|unpacking)\s+(?:objects|deltas):\s+(\d+)%",
+    re.IGNORECASE,
+)
+
+
+def _read_progress(line: str) -> tuple[int, str] | None:
+    """Đổi dòng tiến trình của git thành phần trăm và câu trạng thái."""
+    match = _PROGRESS_LINE.search(line)
+    if match is None:
+        return None
+    phase = match.group(1).lower()
+    pct = int(match.group(2))
+    if phase == "counting":
+        return 5 + pct * 15 // 100, "Đang chuẩn bị tải…"
+    if phase == "compressing":
+        return 20 + pct * 10 // 100, "Đang chuẩn bị tải…"
+    if phase == "receiving":
+        return 30 + pct * 60 // 100, "Đang tải code mới…"
+    return 90 + pct * 10 // 100, "Đang ghép file…"
+
+
+def _split_git_chunks(buf: bytes) -> tuple[bytes, list[str]]:
+    pieces: list[str] = []
+    while True:
+        cut = None
+        for sep in (b"\r", b"\n"):
+            found = buf.find(sep)
+            if found >= 0 and (cut is None or found < cut):
+                cut = found
+        if cut is None:
+            break
+        piece = buf[:cut]
+        buf = buf[cut + 1 :]
+        if piece.strip():
+            pieces.append(piece.decode("utf-8", "replace"))
+    return buf, pieces
+
+
+def _git_stream(repo: Path, on_status, on_progress, *args: str) -> tuple[int, str]:
+    """Chạy git và đọc tiến trình tải. Git ghi phần trăm bằng dấu về đầu dòng."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    proc = subprocess.Popen(
+        [shutil.which("git") or "git", *args],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+        creationflags=flags,
+    )
+    notes: list[str] = []
+
+    def reader() -> None:
+        assert proc.stdout is not None
+        buf = b""
+        while True:
+            block = proc.stdout.read(256)
+            if not block:
+                break
+            buf += block
+            buf, pieces = _split_git_chunks(buf)
+            for piece in pieces:
+                step = _read_progress(piece)
+                if step is None:
+                    notes.append(piece.strip())
+                    continue
+                pct, label = step
+                on_progress(pct)
+                on_status(label)
+        if buf.strip():
+            notes.append(buf.decode("utf-8", "replace").strip())
+
+    worker = threading.Thread(target=reader, daemon=True)
+    worker.start()
+    try:
+        code = proc.wait(timeout=180)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        worker.join(timeout=2)
+        return 1, "Hết giờ khi tải code."
+    worker.join(timeout=5)
+    return code, "\n".join(note for note in notes if note)
+
+
+def _remote_sha(repo: Path, branch: str) -> tuple[str, str]:
+    listed = _git(repo, "ls-remote", "origin", f"refs/heads/{branch}")
+    if listed.returncode != 0:
+        return "", _one_line(listed.stderr or listed.stdout)
+    token = listed.stdout.split()
+    if not token:
+        return "", f"GitHub không có nhánh {branch}."
+    return token[0], ""
+
+
+def pull_from_github(repo: Path, on_status, on_progress) -> str:
+    """Kéo code mới nếu máy có Git và remote là GitHub. Không đụng cấu hình git."""
+    on_status("Đang kiểm tra GitHub…")
+    if shutil.which("git") is None:
+        return "Máy chưa có Git nên không kéo code từ GitHub được."
+    if not (repo / ".git").exists():
+        return "Thư mục tool không phải repo Git."
+    url = _git(repo, "remote", "get-url", "origin")
+    remote = url.stdout.strip().lower()
+    if url.returncode != 0 or "github.com" not in remote:
+        return "Repo này chưa gắn remote GitHub."
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    local = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    if not branch or branch == "HEAD":
+        branch = "main"
+    sha, problem = _remote_sha(repo, branch)
+    if not sha:
+        return f"Không kiểm tra được GitHub: {problem}"
+    if sha == local:
+        return "Đã là bản mới nhất."
+    known = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
+    if known.returncode == 0 and _git(repo, "merge-base", "--is-ancestor", sha, "HEAD").returncode == 0:
+        return "Đã là bản mới nhất."
+    on_status("Có bản mới. Đang tải…")
+    on_progress(0)
+    code, text = _git_stream(repo, on_status, on_progress, "pull", "--ff-only", "--progress", "origin", branch)
+    if code != 0:
+        return f"Không kéo được code: {_one_line(text)}"
+    on_progress(100)
+    if "already up to date" in text.lower() or "already up-to-date" in text.lower():
+        return "Đã là bản mới nhất."
+    return "Đã kéo code mới. Tắt cửa sổ rồi mở lại để dùng bản mới."
 
 
 def fish_step(message: str) -> str | None:
@@ -56,6 +215,7 @@ class Presenter:
     def __init__(self, root):
         self.mode = "fish"
         self.running = False
+        self._updating = False
         self._loading = False
         self.stop = threading.Event()
         self.worker: threading.Thread | None = None
@@ -482,6 +642,55 @@ class Presenter:
         LOGS.mkdir(parents=True, exist_ok=True)
         os.startfile(LOGS)
         self.view.toast("Mở thư mục log.")
+
+    def update_from_github(self) -> None:
+        current = getattr(self.view, "_update_dialog", None)
+        if self._updating:
+            if current is not None and current.alive:
+                current.lift()
+            else:
+                self.view.toast("Đang cập nhật…")
+            return
+        dialog = self.view.open_update_dialog()
+        if self.running:
+            dialog.set_status("Đang chạy, hãy dừng trước khi cập nhật.")
+            return
+        self._updating = True
+        self.view.set_update_busy(True)
+        dialog.set_status("Đang kiểm tra GitHub…")
+        threading.Thread(target=self._update_from_github, args=(dialog,), daemon=True).start()
+
+    def _update_from_github(self, dialog) -> None:
+        def on_status(text: str) -> None:
+            def apply(text: str = text) -> None:
+                if dialog.alive:
+                    dialog.set_status(text)
+
+            self.view.invoke(apply)
+
+        def on_progress(pct: int) -> None:
+            def apply(pct: int = pct) -> None:
+                if dialog.alive:
+                    dialog.set_progress(pct)
+
+            self.view.invoke(apply)
+
+        try:
+            message = pull_from_github(REPO, on_status, on_progress)
+        except Exception as exc:
+            message = f"Không cập nhật được: {exc}"
+
+        def done() -> None:
+            self._updating = False
+            self.view.set_update_busy(False)
+            if dialog.alive:
+                dialog.set_status(message)
+                if dialog.showing_progress and message.startswith("Đã kéo"):
+                    dialog.set_progress(100)
+            else:
+                self.view.toast(message)
+
+        self.view.invoke(done)
 
     def _note_fish_row(self, message: str) -> None:
         if message.startswith("Lượt ") and "quăng" in message:

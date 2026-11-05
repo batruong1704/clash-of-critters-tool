@@ -48,6 +48,9 @@ TAP_LATENCY = 0.22
 CAPTURE_FRACTION = 0.40
 # Sau cú bấm, ảnh đầu có thể chụp trước khi game nhận kịp. Bỏ qua quyết định trong khoảng này.
 TAP_COOLDOWN = 0.9
+# Mồi đã nằm trong vùng mà thanh mới hoặc màn kết quả có khi mãi 1,5–1,6s sau mới hiện.
+# Gọi trượt lúc 0,9s sẽ đẩy độ trễ sai và bấm thêm một cú vào đúng thanh vừa trúng.
+HIT_SETTLE = 1.70
 # Độ trễ của cú bấm, từ lúc phát lệnh tới lúc game nhận (giây). Các lượt chiều 5/11 (bấm bằng tap_fast) có mồi
 # ở giữa vùng vàng khoảng 0,14s sau lệnh. 0,30s là số cũ, đo trước khi bấm qua shell giữ sẵn, và làm cú bấm tới muộn.
 # Tool tự dò lại số này từ các cú trúng và nhớ qua các phiên. Khi chưa đủ cú trúng thì dùng số này.
@@ -150,6 +153,7 @@ class Runner:
         self._zone: tuple[int, int] | None = None
         self._zone_seen: list[tuple[int, int]] = []
         self._cooldown_until = 0.0
+        self._tap_at = 0.0
         self._tapped_zone = False
         self._miss_streak = 0
         # learn=False (mô phỏng, kiểm tra) thì không đọc cũng không ghi bộ nhớ học.
@@ -520,6 +524,14 @@ class Runner:
         if now < self._cooldown_until:
             return
         if self._tapped_zone:
+            row = self._cast_tap_log[-1] if self._cast_tap_log else None
+            err = self._landing_error(row) if row is not None else None
+            half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2 if row is not None else 0.0
+            if _hold_hit(now, self._tap_at, err, half):
+                if row is not None and not row.get("cho_xac_nhan"):
+                    row["cho_xac_nhan"] = True
+                    self._trace(f"chờ xác nhận, mồi lệch {err:+.0f}px còn trong vùng")
+                return
             # Đã bấm mà vẫn là vùng cũ: trượt. Mồi tiếp tục chạy nên giữ mô hình, ảnh sau tính lại giờ bấm.
             self._tapped_zone = False
             self._remember(hit=False)
@@ -590,6 +602,7 @@ class Runner:
         self.stats.taps += 1
         self._cast_taps += 1
         self._tapped_zone = True
+        self._tap_at = tapped
         self._last_offset = offset
         self._cooldown_until = tapped + TAP_COOLDOWN
         self.log(
@@ -986,17 +999,36 @@ def _num(value, spec: str) -> str:
     return format(value, spec)
 
 
+def _hold_hit(now: float, tapped: float, err: float | None, half: float) -> bool:
+    """Cú đã rơi trong vùng vàng thì chờ game đổi thanh hoặc hiện kết quả, chưa gọi là trượt.
+
+    Phiên 2026-11-06 00:08: lệch -8px và -23px vẫn câu được, nhưng result hiện lúc 1,5–1,6s.
+    Gọi trượt lúc 1,2s làm tool bấm thêm một cú và đẩy độ trễ sai chiều.
+    """
+    if err is None or half <= 0 or abs(err) > half or tapped <= 0:
+        return False
+    return now < tapped + HIT_SETTLE
+
+
 def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
     """Cùng một thanh trượt hay đã sang thanh mới.
 
     Mồi đè lên vùng vàng làm vùng đọc được hẹp đi từ một phía, nhưng phía còn lại giữ nguyên. Thanh mới thì
     cả hai mép đổi. Trước đây chỉ so từng mép với ngưỡng nên vùng bị che bớt (lệch hơn 25px) bị tính là thanh mới,
     mô hình mồi bị xóa liên tục và tool không bao giờ gom đủ mẫu để bấm.
+    Hai mép cùng trôi khoảng 30px mà vẫn chồng nhiều thì cũng là thanh đó: ánh sáng hoặc mồi làm vùng đọc
+    dịch đi, không phải thanh mới. Thanh mới trong log nhảy tâm khoảng 80px trở lên.
     """
-    edge_kept = abs(new[0] - known[0]) <= ZONE_SHIFT or abs(new[1] - known[1]) <= ZONE_SHIFT
     overlap = min(new[1], known[1]) - max(new[0], known[0])
-    smaller = max(1, min(new[1] - new[0], known[1] - known[0]))
-    return edge_kept and overlap >= 0.4 * smaller
+    width_new = new[1] - new[0]
+    width_known = known[1] - known[0]
+    smaller = max(1, min(width_new, width_known))
+    edge_kept = abs(new[0] - known[0]) <= ZONE_SHIFT or abs(new[1] - known[1]) <= ZONE_SHIFT
+    if edge_kept and overlap >= 0.4 * smaller:
+        return True
+    center_shift = abs((new[0] + new[1]) - (known[0] + known[1])) / 2
+    wider = max(width_new, width_known, 1)
+    return center_shift <= 40 and overlap >= 0.55 * smaller and smaller >= 0.7 * wider
 
 
 def _pick_gold(golds: list[int]) -> int:
