@@ -343,6 +343,143 @@ class UpdateDialog:
             self.view._update_dialog = None
 
 
+class NotesDialog:
+    """Popup sau khi kéo code xong, nêu những thay đổi vừa về."""
+
+    def __init__(self, view: "MainView", notes: str) -> None:
+        self.view = view
+        self.alive = True
+        self._placed = False
+        colors = view.colors
+        top = tk.Toplevel(view.root)
+        self.top = top
+        top.title("Có gì mới")
+        top.configure(bg=colors["panel"])
+        top.resizable(False, False)
+        top.transient(view.root)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        self.body = tk.Frame(top, bg=colors["panel"], padx=18, pady=16)
+        self.body.pack(fill="both", expand=True)
+        self.heading = tk.Label(
+            self.body,
+            text="Có gì mới",
+            bg=colors["panel"],
+            fg=colors["text"],
+            font=("Segoe UI", 14, "bold"),
+            anchor="w",
+        )
+        self.heading.pack(fill="x")
+        self.hint = tk.Label(
+            self.body,
+            text="Tắt cửa sổ rồi mở lại để dùng bản mới.",
+            bg=colors["panel"],
+            fg=colors["mute"],
+            font=UI_FONT,
+            wraplength=400,
+            justify="left",
+            anchor="w",
+        )
+        self.hint.pack(fill="x", pady=(6, 10))
+        self.box_wrap = tk.Frame(self.body, bg=colors["panel"], highlightthickness=1, highlightbackground=colors["line"])
+        self.box_wrap.pack(fill="both", expand=True)
+        self.box = tk.Text(
+            self.box_wrap,
+            height=4,
+            width=46,
+            wrap="word",
+            font=UI_FONT,
+            bd=0,
+            padx=10,
+            pady=8,
+            highlightthickness=0,
+        )
+        self.box.pack(side="left", fill="both", expand=True)
+        self.scroll = ttk.Scrollbar(self.box_wrap, command=self.box.yview)
+        self.box.insert("end", notes)
+        self.box.configure(state="disabled")
+        self.close_btn = tk.Button(
+            self.body,
+            text="Đóng",
+            command=self.close,
+            font=UI_FONT,
+            bd=0,
+            padx=12,
+            pady=8,
+            cursor="hand2",
+        )
+        self.close_btn.pack(fill="x", pady=(14, 0))
+        wrapped = 0
+        for line in notes.splitlines() or [""]:
+            wrapped += max(1, (len(line) + 49) // 50)
+        rows = min(14, max(4, wrapped))
+        self.box.configure(height=rows)
+        if wrapped > rows:
+            self.scroll.pack(side="right", fill="y")
+            self.box.configure(yscrollcommand=self.scroll.set)
+        self.apply_colors()
+        self._fit()
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        top.lift()
+        top.focus_force()
+
+    def apply_colors(self) -> None:
+        if not self.alive:
+            return
+        colors = self.view.colors
+        self.top.configure(bg=colors["panel"])
+        self.body.configure(bg=colors["panel"])
+        self.heading.configure(bg=colors["panel"], fg=colors["text"])
+        self.hint.configure(bg=colors["panel"], fg=colors["mute"])
+        self.box_wrap.configure(bg=colors["panel"], highlightbackground=colors["line"])
+        self.box.configure(
+            bg=colors["log"],
+            fg=colors["text"],
+            insertbackground=colors["text"],
+            selectbackground=colors["acc"],
+            selectforeground=colors["acc_t"],
+        )
+        self.close_btn.configure(
+            bg=colors["acc"],
+            fg=colors["acc_t"],
+            activebackground=colors["acc"],
+            activeforeground=colors["acc_t"],
+            highlightthickness=0,
+        )
+
+    def _fit(self) -> None:
+        if not self.alive:
+            return
+        self.top.update_idletasks()
+        width = 460
+        height = max(self.top.winfo_reqheight(), 1)
+        root = self.view.root
+        x = root.winfo_rootx() + max(0, (root.winfo_width() - width) // 2)
+        y = root.winfo_rooty() + max(0, (root.winfo_height() - height) // 2)
+        self._placed = True
+        self.top.geometry(f"{width}x{height}+{x}+{y}")
+
+    def lift(self) -> None:
+        if not self.alive:
+            return
+        self.top.lift()
+        self.top.focus_force()
+
+    def close(self) -> None:
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        self.top.destroy()
+        if self.view._notes_dialog is self:
+            self.view._notes_dialog = None
+
+
 def fish_level(message: str) -> str:
     """Mức dòng log câu cá. Chi tiết cú bấm để ẩn cho đến khi bật hiện."""
     if message.startswith("Lượt "):
@@ -382,6 +519,7 @@ class MainView:
         self._settings_open = False
         self._update_busy = False
         self._update_dialog: UpdateDialog | None = None
+        self._notes_dialog: NotesDialog | None = None
         self._row_seq = 0
         self._bar_current = 0
         self._bar_total = 0
@@ -1178,6 +1316,15 @@ class MainView:
         self._update_dialog = dialog
         return dialog
 
+    def open_notes_dialog(self, notes: str) -> NotesDialog:
+        current = self._notes_dialog
+        if current is not None and current.alive:
+            current.lift()
+            return current
+        dialog = NotesDialog(self, notes.strip() or "Đã kéo code mới.")
+        self._notes_dialog = dialog
+        return dialog
+
     def _refresh_cache_label(self) -> None:
         self.purge_btn.configure(text=f"Xóa cache ({_format_size(_cache_bytes())})")
 
@@ -1396,6 +1543,8 @@ class MainView:
         running = self.presenter.running
         if self._update_dialog is not None and self._update_dialog.alive:
             self._update_dialog.apply_colors()
+        if self._notes_dialog is not None and self._notes_dialog.alive:
+            self._notes_dialog.apply_colors()
         self.root.configure(bg=colors["bg"])
         self.body.configure(bg=colors["bg"])
         self.header.configure(bg=colors["bg"])

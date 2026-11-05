@@ -149,38 +149,96 @@ def _remote_sha(repo: Path, branch: str) -> tuple[str, str]:
     return token[0], ""
 
 
-def pull_from_github(repo: Path, on_status, on_progress) -> str:
+def _render_version(text: str) -> str:
+    """Lấy tiêu đề và các mục Thêm, Sửa, Bỏ. Bỏ phần kiểm tra và lưu ý kỹ thuật."""
+    title = ""
+    sections: list[tuple[str, list[str]]] = []
+    current: list[str] | None = None
+    keep = {"thêm", "sửa", "bỏ"}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("# "):
+            title = line[2:].strip()
+            continue
+        if line.startswith("## "):
+            name = line[3:].strip()
+            current = None
+            if name.lower() in keep:
+                current = []
+                sections.append((name, current))
+            continue
+        if current is not None and line.startswith("- "):
+            current.append(line[2:].strip())
+    parts: list[str] = []
+    if title:
+        parts.append(title)
+    for name, items in sections:
+        if not items or (len(items) == 1 and items[0].lower().rstrip(".") == "không có"):
+            continue
+        parts.append(name)
+        parts.extend(f"• {item}" for item in items)
+    return "\n".join(parts)
+
+
+def _notes_between(repo: Path, old: str, new: str) -> str:
+    """Những thay đổi vừa kéo về. Ưu tiên file phiên bản, không có thì lấy câu mô tả commit."""
+    if not old or not new or old == new:
+        return ""
+    listed = _git(repo, "diff", "--name-only", "--diff-filter=AM", f"{old}..{new}", "--", "checking-mvp/versions")
+    paths = []
+    for rel in listed.stdout.splitlines():
+        path = repo / rel.strip()
+        if path.suffix.lower() == ".md" and path.is_file():
+            paths.append(path)
+    paths.sort(key=lambda path: path.stem, reverse=True)
+    blocks = []
+    for path in paths:
+        try:
+            block = _render_version(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if block:
+            blocks.append(block)
+    if blocks:
+        return "\n\n".join(blocks)
+    log = _git(repo, "log", "--pretty=format:%s", f"{old}..{new}")
+    subjects = [line.strip() for line in log.stdout.splitlines() if line.strip()]
+    return "\n".join(f"• {line}" for line in subjects[:12])
+
+
+def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
     """Kéo code mới nếu máy có Git và remote là GitHub. Không đụng cấu hình git."""
     on_status("Đang kiểm tra GitHub…")
     if shutil.which("git") is None:
-        return "Máy chưa có Git nên không kéo code từ GitHub được."
+        return "Máy chưa có Git nên không kéo code từ GitHub được.", ""
     if not (repo / ".git").exists():
-        return "Thư mục tool không phải repo Git."
+        return "Thư mục tool không phải repo Git.", ""
     url = _git(repo, "remote", "get-url", "origin")
     remote = url.stdout.strip().lower()
     if url.returncode != 0 or "github.com" not in remote:
-        return "Repo này chưa gắn remote GitHub."
+        return "Repo này chưa gắn remote GitHub.", ""
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     local = _git(repo, "rev-parse", "HEAD").stdout.strip()
     if not branch or branch == "HEAD":
         branch = "main"
     sha, problem = _remote_sha(repo, branch)
     if not sha:
-        return f"Không kiểm tra được GitHub: {problem}"
+        return f"Không kiểm tra được GitHub: {problem}", ""
     if sha == local:
-        return "Đã là bản mới nhất."
+        return "Đã là bản mới nhất.", ""
     known = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
     if known.returncode == 0 and _git(repo, "merge-base", "--is-ancestor", sha, "HEAD").returncode == 0:
-        return "Đã là bản mới nhất."
+        return "Đã là bản mới nhất.", ""
     on_status("Có bản mới. Đang tải…")
     on_progress(0)
     code, text = _git_stream(repo, on_status, on_progress, "pull", "--ff-only", "--progress", "origin", branch)
     if code != 0:
-        return f"Không kéo được code: {_one_line(text)}"
+        return f"Không kéo được code: {_one_line(text)}", ""
     on_progress(100)
     if "already up to date" in text.lower() or "already up-to-date" in text.lower():
-        return "Đã là bản mới nhất."
-    return "Đã kéo code mới. Tắt cửa sổ rồi mở lại để dùng bản mới."
+        return "Đã là bản mới nhất.", ""
+    new = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    return "Đã kéo code mới.", _notes_between(repo, local, new)
 
 
 def fish_step(message: str) -> str | None:
@@ -676,13 +734,18 @@ class Presenter:
             self.view.invoke(apply)
 
         try:
-            message = pull_from_github(REPO, on_status, on_progress)
+            message, notes = pull_from_github(REPO, on_status, on_progress)
         except Exception as exc:
-            message = f"Không cập nhật được: {exc}"
+            message, notes = f"Không cập nhật được: {exc}", ""
 
         def done() -> None:
             self._updating = False
             self.view.set_update_busy(False)
+            if message.startswith("Đã kéo") and notes:
+                if dialog.alive:
+                    dialog.close()
+                self.view.open_notes_dialog(notes)
+                return
             if dialog.alive:
                 dialog.set_status(message)
                 if dialog.showing_progress and message.startswith("Đã kéo"):
