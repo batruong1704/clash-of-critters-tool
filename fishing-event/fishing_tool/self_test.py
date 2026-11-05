@@ -14,6 +14,8 @@ import numpy as np
 from fishing_tool.paths import RESOURCE, VIDEO
 from fishing_tool.vision import (
     MULTIPLIERS,
+    POINTER_HI,
+    POINTER_LO,
     Templates,
     fish_tile_point,
     normalize,
@@ -52,12 +54,14 @@ def _test_memory(check) -> None:
         off.record(0.9, True)
         check("nhớ: tắt học thì không ghi", len(Memory(path).taps), 10)
 
-    # Mồi chạy 200px/s từ 199. Bấm lúc t=1.0 thì mồi ở 199+200*(1.0+L). Vùng vàng 400-480 chứa mồi khi L trong 0.0-0.4
-    # (rồi lại vào vùng ở L từ 0.93 sau khi nảy ở đầu thanh, ngoài lưới thử).
+    # Mồi chạy 200px/s từ đầu thanh. Bấm lúc t=1.0 thì mồi ở POINTER_LO+200. Vùng vàng 400-480 chứa mồi
+    # khi L trong khoảng ngắn sau đó (rồi lại vào vùng sau khi nảy, ngoài lưới thử).
     tracker = Tracker()
-    def pointer(when: float) -> float:  # sóng tam giác 199..532, 200px/s
-        phase = (200 * when) % (2 * 333)
-        return 199 + (phase if phase <= 333 else 2 * 333 - phase)
+    span = POINTER_HI - POINTER_LO
+
+    def pointer(when: float) -> float:  # sóng tam giác theo hai đầu thanh, 200px/s
+        phase = (200 * when) % (2 * span)
+        return POINTER_LO + (phase if phase <= span else 2 * span - phase)
 
     for step in range(8):
         tracker.add(0.4 * step, pointer(0.4 * step))
@@ -70,7 +74,52 @@ def _test_memory(check) -> None:
 
     check("gold đọc một lần", _pick_gold([1210]), 1210)
     check("gold một chữ số không nhận", _pick_gold([9]), 0)
+    check("gold một chữ số lặp vẫn nhận", _pick_gold([2, 2]), 2)
     check("gold lấy số đủ chữ", _pick_gold([210, 1210]), 1210)
+    check("gold không để số 2 đè 118", _pick_gold([118, 118, 2, 2, 2, 2]), 118)
+
+
+def _test_stop(check) -> None:
+    import threading
+    import time
+
+    from fishing_tool.flow import Runner, Stopped
+
+    stop = threading.Event()
+    notes: list[str] = []
+    runner = Runner(object(), notes.append, stop, 3, learn=False)
+    stop.set()
+
+    def raises() -> bool:
+        try:
+            runner._check()
+        except Stopped:
+            return True
+        return False
+
+    runner._last_kind = "idle"
+    check("dừng ngay khi chưa vào lượt", raises(), True)
+
+    runner._cast_open = True
+    runner._last_kind = "slider"
+    check("đang câu thì chưa dừng", raises(), False)
+    check("đang câu thì chưa dừng, lần hai", raises(), False)
+    check("báo câu nốt một lần", notes.count("Đang câu dở. Câu nốt lượt này rồi dừng."), 1)
+
+    runner._cast_open = False
+    runner._last_kind = "result"
+    runner._settle_since = None
+    check("còn màn kết quả thì chưa dừng", raises(), False)
+
+    runner._settle_since = time.time() - 30
+    check("màn kết quả kẹt thì dừng", raises(), True)
+
+    try:
+        runner._on_idle(None, None, 0, 0)
+        idle_stopped = False
+    except Stopped:
+        idle_stopped = True
+    check("không quăng lượt mới sau khi dừng", idle_stopped, True)
 
 
 def main() -> int:
@@ -135,7 +184,20 @@ def main() -> int:
     check("gold video 716", read_gold(frame(716)), 548)
     check("không có gold ở video 760", read_gold(frame(760)), None)
 
+    wrong = cv2.VideoCapture(str(RESOURCE / "demo-sai-diem-vang.mp4"))
+
+    def at(second: float):
+        wrong.set(cv2.CAP_PROP_POS_MSEC, second * 1000)
+        ok, img = wrong.read()
+        if not ok:
+            raise RuntimeError(f"Không đọc được giây {second}")
+        return normalize(img)
+
+    check("gold 118 ở giây 32.8", read_gold(at(32.8)), 118)
+    check("mưa đồng xu không thành số 2", read_gold(at(34.7)), None)
+
     _test_memory(check)
+    _test_stop(check)
 
     print("XONG" if failed == 0 else f"{failed} mục lỗi")
     return 1 if failed else 0

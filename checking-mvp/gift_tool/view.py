@@ -128,6 +128,7 @@ SCAN_HINT = "ID đầu là lượt 1. Mỗi lần sau cộng thêm 1."
 RALLY_HINT = "Tự vào và tham gia rally. Chỉ bấm nút xanh, không tạo rally."
 START_LABEL = "▶  Bắt đầu"
 STOP_LABEL = "■  Dừng"
+HOLD_LABEL = "■  Câu nốt"
 OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào", "câu được cá", "thành công")
 BAD_MARKS = (
     "lỗi",
@@ -227,6 +228,7 @@ class MainView:
         self._show_debug = False
         self._auto_scroll = True
         self._view_name = "result"
+        self._fish_hold = False
 
         self.root.title("Auto fishing")
         self.root.minsize(860, 640)
@@ -330,7 +332,7 @@ class MainView:
         self.main = tk.Frame(self.body, highlightthickness=1)
         self.main.grid(row=1, column=1, sticky="nsew")
         self.main.columnconfigure(0, weight=1)
-        self.main.rowconfigure(3, weight=1)
+        self.main.rowconfigure(4, weight=1)
 
         self.progress = tk.Frame(self.main)
         self.progress.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 0))
@@ -345,9 +347,17 @@ class MainView:
         self.percent_label.grid(row=0, column=2, sticky="e")
         self.step_label = tk.Label(self.main, textvariable=self.step_var, font=("Segoe UI", 9), anchor="w")
         self.step_label.grid(row=1, column=0, sticky="ew", padx=14, pady=(4, 0))
+        self.hold_banner = tk.Label(
+            self.main,
+            text="Đã dừng. Đang câu nốt con cá này.",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+        )
+        self.hold_banner.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 0), ipady=6, ipadx=8)
+        self.hold_banner.grid_remove()
 
         self.tiles_row = tk.Frame(self.main)
-        self.tiles_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(10, 0))
+        self.tiles_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(10, 0))
         self.tile_order = ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã xin", "Quà", "UID", "Pinball")
         self.tiles = {}
         for index, name in enumerate(self.tile_order):
@@ -362,7 +372,7 @@ class MainView:
         self._tile_tones = {name: "gold" if name == "Gold" else "text" for name in self.tile_order}
 
         self.views = tk.Frame(self.main)
-        self.views.grid(row=3, column=0, sticky="nsew", padx=14, pady=(12, 14))
+        self.views.grid(row=4, column=0, sticky="nsew", padx=14, pady=(12, 14))
         views = self.views
         views.columnconfigure(0, weight=1)
         views.rowconfigure(1, weight=1)
@@ -554,7 +564,7 @@ class MainView:
         self.help_btn.grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
         self.help_tip = tk.Label(
             page,
-            text="Hệ số xN tốn N rod mỗi lần quăng. Tool dừng khi đủ lượt hoặc hết rod. Game hiện có đến x100.",
+            text="Hệ số xN tốn N rod mỗi lần quăng. Bấm Dừng khi đang câu thì câu nốt lượt đó rồi mới dừng. Hết lượt hoặc hết rod cũng dừng. Game hiện có đến x100.",
             font=("Segoe UI", 9),
             wraplength=240,
             justify="left",
@@ -688,7 +698,13 @@ class MainView:
         self.ids.configure(state=state)
         for button in self._segments:
             button.configure(state=state)
-        self.primary_btn.configure(text=STOP_LABEL if locked else START_LABEL)
+        if not locked:
+            self._fish_hold = False
+            self.hold_banner.grid_remove()
+        self.primary_btn.configure(
+            text=HOLD_LABEL if self._fish_hold else (STOP_LABEL if locked else START_LABEL),
+            cursor="arrow" if self._fish_hold else "hand2",
+        )
         if locked:
             self.warn_label.grid()
         else:
@@ -736,6 +752,24 @@ class MainView:
                 self._set_bar(step, 0, 0)
             else:
                 self._set_bar(progress[2], progress[0], progress[1])
+
+        self.invoke(apply)
+
+    def set_fish_hold(self, holding: bool) -> None:
+        """Dải và nút giữ nguyên khi đã bấm Dừng nhưng lượt câu đang dở chưa xong."""
+
+        def apply() -> None:
+            self._fish_hold = holding
+            if holding:
+                self.hold_banner.grid()
+                self.primary_btn.configure(text=HOLD_LABEL, cursor="arrow")
+            else:
+                self.hold_banner.grid_remove()
+                self.primary_btn.configure(
+                    text=STOP_LABEL if self.presenter.running else START_LABEL,
+                    cursor="hand2",
+                )
+            self._paint()
 
         self.invoke(apply)
 
@@ -1098,7 +1132,8 @@ class MainView:
         self.bar.create_rectangle(0, 0, width, height, fill=colors["tile"], outline=colors["line"])
         if self._bar_total > 0 and self._bar_current > 0:
             filled = max(2, int(width * min(self._bar_current, self._bar_total) / self._bar_total))
-            self.bar.create_rectangle(0, 0, filled, height, fill=colors["acc"], outline="")
+            fill = colors["warn"] if self._fish_hold else colors["acc"]
+            self.bar.create_rectangle(0, 0, filled, height, fill=fill, outline="")
 
     def _number(self, text: str) -> int:
         digits = "".join(char for char in text if char.isdigit())
@@ -1184,12 +1219,28 @@ class MainView:
         self.card.configure(bg=colors["panel"])
         self.hint_label.configure(bg=colors["panel"], fg=colors["mute"])
         self.step_label.configure(bg=colors["panel"], fg=colors["mute"])
+        hold_bg = "#f8efe4" if self.theme_name == "light" else "#3d3218"
+        self.hold_banner.configure(bg=hold_bg, fg=colors["warn"])
         self.progress_label.configure(bg=colors["panel"], fg=colors["text"])
         self.percent_label.configure(bg=colors["panel"], fg=colors["mute"])
         self.toast_label.configure(bg=colors["panel"], fg=colors["mute"])
         warn_bg = "#f8efe4" if self.theme_name == "light" else "#3d3218"
         self.warn_label.configure(bg=warn_bg, fg=colors["warn"])
-        self.primary_btn.configure(bg=colors["err"] if running else colors["acc"], fg="#ffffff" if running or self.theme_name == "light" else colors["acc_t"], activebackground=colors["err"] if running else colors["acc"], activeforeground="#ffffff")
+        if self._fish_hold:
+            button_bg = colors["warn"]
+            button_fg = "#1b1d21" if self.theme_name == "dark" else "#ffffff"
+        elif running:
+            button_bg = colors["err"]
+            button_fg = "#ffffff"
+        else:
+            button_bg = colors["acc"]
+            button_fg = "#ffffff" if self.theme_name == "light" else colors["acc_t"]
+        self.primary_btn.configure(
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_bg,
+            activeforeground=button_fg,
+        )
         self.tools_btn.configure(bg=colors["panel"], fg=colors["text"], highlightbackground=colors["line"], highlightthickness=1)
         self.tool_menu.configure(bg=colors["panel"], highlightbackground=colors["line"])
         for button in (self.capture_btn, self.preview_btn, self.logs_btn):

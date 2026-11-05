@@ -31,9 +31,10 @@ SLIDER_BOB_Y = (0.640, 0.700)
 SLIDER_X = (0.22, 0.80)
 SLIDER_MIN_YELLOW = 500
 
-# Khoảng đi của tâm mồi trên ảnh 720 (đo trên video: tới 532 bên phải, thanh giữa 365).
-POINTER_LO = 199.0
-POINTER_HI = 532.0
+# Khoảng đi của tâm mồi trên ảnh 720. Video tỉ lệ trượt, lượt khó: tâm nảy ở khoảng 206 và 536.
+# Mốc cũ 199 và 532 làm cú bấm sau cú nảy tới muộn khoảng 20px, trượt vùng cuối rộng 36px.
+POINTER_LO = 206.0
+POINTER_HI = 536.0
 
 DIGIT_SCORE = 0.50
 DIGIT_MARGIN = 0.04
@@ -259,11 +260,30 @@ def read_rods(img) -> int | None:
     return _read_digits(img, (0.40, 0.87, 0.62, 0.925), (0.0125, 0.020), "white")
 
 
+def _coin_shower(img) -> bool:
+    """Nhiều đồng xu tròn bay lên sau chữ +Gold. Mảnh xu hay khớp mẫu chữ số 2."""
+    x0, x1 = int(0.50 * REF_W), int(0.95 * REF_W)
+    y0, y1 = int(0.28 * REF_H), int(0.55 * REF_H)
+    hsv = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    yellow = (hsv[..., 0] >= 12) & (hsv[..., 0] <= 35) & (hsv[..., 1] >= 80) & (hsv[..., 2] >= 160)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(yellow.astype(np.uint8) * 255, 8)
+    rounds = 0
+    for index in range(1, count):
+        _, _, width, height, _ = [int(value) for value in stats[index]]
+        short, long = min(width, height), max(width, height)
+        if 28 <= short and long <= 110 and long <= short * 1.45:
+            rounds += 1
+    return rounds >= 4
+
+
 def read_gold(img) -> int | None:
     """Chữ vàng +Gold hiện thoáng bên phải đầu cá, phía trên số trắng cạnh đồng xu bạc.
 
     Đo trên demo-video.mp4: chữ vàng hiện khoảng giây 23,6 đến 24,2 rồi mất trước giây 24,4.
     Vùng đọc chỉ phủ hàng chữ đó (y khoảng 0,30–0,40). Không kéo xuống hàng số trắng, dòng cân nặng hay dòng Beat …%.
     Chữ vừa hiện thì nét còn cao hơn lúc đứng yên, nên khoảng chiều cao rộng hơn số rod.
+    demo-sai-diem-vang.mp4 giây 32: chữ là 118, rồi mưa đồng xu. Mưa đó không được đọc thành 2.
     """
+    if _coin_shower(img):
+        return None
     return _read_digits(img, (0.58, 0.30, 0.88, 0.40), (0.016, 0.036), "gold")

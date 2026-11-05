@@ -7,7 +7,7 @@ Tool điều khiển game trong **LDPlayer 9** (màn dọc 720×1280) qua ADB, g
 1. Mở LDPlayer, bật **Gỡ lỗi ADB** (Cài đặt, mục Khác) như tool nhận quà.
 2. Mở game. Đang ở sân, màn Pinball hay màn Fishing Contest đều được. Tool tự đi từ sân: Pinball, ô Fishing Contest.
 3. Mở giao diện chung (`py main.py` trong thư mục `checking-mvp`), chọn tab **Tự câu cá**. Nhập **Số lượt câu** và **Hệ số** (để trống là x1) rồi bấm **Bắt đầu**.
-4. Bấm **Dừng** để dừng ngay. Tiến độ (lượt, thành công, thất bại, Gold, rod còn) hiện ở dòng trạng thái, chi tiết ở khung nhật ký.
+4. Bấm **Dừng**. Chưa vào lượt thì dừng ngay. Đang câu dở thì câu nốt lượt đó, gồm thanh trượt và đóng màn kết quả, rồi mới dừng. Không quăng lượt mới. Lúc đó nút chuyển thành **Câu nốt**, thanh tiến độ chuyển vàng, và một dải vàng hiện "Đã dừng. Đang câu nốt con cá này." Dải này giữ đến khi lượt xong, không bị dòng trạng thái phía trên ghi đè. Tiến độ (lượt, thành công, thất bại, Gold, rod còn) hiện ở dòng trạng thái, chi tiết ở khung nhật ký.
 
 Không bấm vào emulator khi tool đang chạy.
 
@@ -59,16 +59,16 @@ Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào vi
 - Điểm nhắm là **giữa vùng đang thấy** (3 lần đọc gần nhất). Mồi che một mép làm vùng vừa đọc hẹp hơn rõ so với bản rộng nhất của cùng thanh thì nhắm theo bản rộng nhất.
 - Chỉ bấm khi mồi được dự đoán nằm trong **40% giữa** vùng đó. Ngoài khoảng này thì chờ mẫu mới, không bấm mép. Đủ 20 cú có `err_px` thì bán kính này thu lại theo các cú trúng (không rộng hơn 40% nhìn thấy).
 - Mồi đỏ đã chạy trước khi vùng vàng hiện (lúc Reel hoặc cảnh chuyển) thì được ghi lại. Vàng hiện lên là bấm theo quỹ đạo đó, không đo lại từ đầu.
-- Ba ảnh liên tiếp cùng một chiều là đủ vận tốc và pha. Vùng rộng còn có thể bấm từ ảnh thứ 4 nếu đường khớp. Không đợi đủ 5 ảnh.
+- Ba ảnh liên tiếp cùng một chiều là đủ vận tốc và pha. Vùng rộng còn bấm từ ảnh thứ 3 khi đường khớp lệch không quá 8px, kể cả khi ba ảnh chưa đi một chiều vì cú nảy nằm trong đó. Chờ thêm sẽ lỡ lượt mồi đang đi ngang. Vùng rộng cũng bấm từ ảnh thứ 4 nếu đường khớp. Không đợi đủ 5 ảnh. Vùng hẹp hơn 120px không dùng lối tắt này.
 - Vùng từ 120px trở lên: lệnh tính với độ trễ 0,24 giây. Vùng hẹp hơn: độ trễ đang học cộng 0,12 giây.
-- Cửa sổ vào vùng còn xa hơn 0,70 giây thì chụp tiếp, chỉnh pha trên đoạn mồi đang chạy, rồi mới bấm. Trượt thì không xóa quỹ đạo: lần mồi quay lại được đặt lịch từ mô hình đang có, và độ trễ được xê tối đa 0,08 giây theo `err_px` của cú vừa trượt.
+- Cửa sổ vào vùng còn xa hơn 0,70 giây thì chụp tiếp, chỉnh pha trên đoạn mồi đang chạy, rồi mới bấm. Trượt thì không xóa quỹ đạo: lần mồi quay lại được đặt lịch từ mô hình đang có. Độ trễ chỉ xê khi mồi còn trong vùng (lệch không quá nửa bề rộng); lệch lớn hơn thế là sai pha, giữ nguyên độ trễ. Mức xê không quá 0,08 giây và không quá khoảng 35% nửa vùng.
 - Vùng dưới 120px mà chưa có đoạn thẳng sạch: lần bấm đầu vẫn chờ ít nhất 6 mẫu và sai số ≤ 18px. Trượt thì tính lại từ ảnh mới, không xê ±0,03 giây.
-- Mồi chạy kiểu sóng tam giác, nảy ở khoảng x=199 và x=532 trên ảnh 720px, tốc độ thường 210–250 px/s. Mỗi ảnh chụp mất khoảng 0,45 giây nên không bấm theo ảnh vừa thấy. Bấm đi qua một shell ADB mở sẵn.
+- Mồi chạy kiểu sóng tam giác, nảy ở khoảng x=206 và x=536 trên ảnh 720px (tâm mồi đo trên video tỉ lệ trượt; mốc cũ 199 và 532 làm cú bấm sau cú nảy tới muộn khoảng 20px), tốc độ thường 210–250 px/s. Mỗi ảnh chụp mất khoảng 0,45 giây nên không bấm theo ảnh vừa thấy. Bấm đi qua một shell ADB mở sẵn.
 - Trượt không mất rod, chỉ mất thời gian. Hết khoảng 30 giây thì cá thoát, ghi `that_bai`.
 
 ### Độ trễ cú bấm
 
-- Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**. Vùng rộng không dùng số này để phát lệnh: video 17:29 cho thấy số học được (0,10 giây) tới muộn, nên lệnh của vùng rộng tính với **0,24 giây**. Sau một cú trượt, độ trễ của lần bấm kế trên cùng thanh được xê thêm tối đa 0,08 giây theo `err_px`.
+- Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**. Vùng rộng không dùng số này để phát lệnh: video 17:29 cho thấy số học được (0,10 giây) tới muộn, nên lệnh của vùng rộng tính với **0,24 giây**. Sau một cú trượt mà mồi vẫn nằm trong vùng, độ trễ của lần bấm kế trên cùng thanh được xê theo `err_px`, tối đa 0,08 giây và không quá khoảng 35% nửa vùng. Mồi đã ra khỏi vùng thì không xê: đó là sai pha, không phải độ trễ.
 - Cú trượt không đưa vào tính độ trễ. Lúc trượt gần như mọi độ trễ đều "khớp", trung vị bị kéo về 0 và cú bấm tới sau khi mồi đã ra khỏi vùng.
 - Số đang dùng hiện ở dòng đầu nhật ký. Dữ liệu ở `data/hoc.json` (tối đa 400 cú). Xóa file đó để học lại. `tools/sim_flow.py` không ghi file này.
 - `py -3 tools/phan_tich.py` chấm lại từng cú từ `logs/*-vet.txt`. Không tin dòng TRÚNG/TRƯỢT cũ trong file vết: bản trước có lúc báo trúng khi mồi chỉ che bớt vùng vàng. Thêm `--nhap` để dựng lại `data/hoc.json` từ các file vết.
@@ -77,7 +77,7 @@ Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào vi
 
 - Chữ vàng `+N` nằm bên phải đầu cá, **phía trên** số trắng cạnh đồng xu bạc. Trên video demo, chữ vàng hiện khoảng giây 23,6 đến 24,2 rồi mất trước giây 24,4. Chưa tới một giây.
 - Không lấy số trắng đó, không lấy dòng cân nặng, không lấy dòng Beat …%. Dòng "New Team Record" không có nghĩa số trắng là Gold.
-- Số từ 10 trở lên nhận ngay khi đọc được một lần. Một chữ số lẻ (tia sáng đọc nhầm) chỉ nhận khi lặp ở hai ảnh.
+- Số từ 10 trở lên nhận ngay khi đọc được một lần. Một chữ số lẻ (tia sáng, hoặc mảnh đồng xu trong mưa xu đọc thành 2) chỉ nhận khi lặp ở hai ảnh, và không được chọn nếu cùng lượt đã đọc được số từ 10 trở lên. Mưa đồng xu sau chữ +Gold không đọc.
 - Tool chụp thêm vài ảnh lúc chuyển cảnh Cool! sang màn kết quả, trước khi bấm bỏ qua. Ngủ 0,8 giây ở cảnh đó sẽ bỏ lỡ chữ vàng.
 
 ### Màn kết quả và rod
@@ -85,7 +85,8 @@ Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào vi
 - Hệ số xN tốn N rod mỗi lần quăng. Còn ít hơn N rod thì dừng.
 - Bấm `(130, 1100)` để đóng màn kết quả, kể cả "New Team Record". Bấm giữa màn hoặc `(360, 900)` không đóng được. `(360, 1100)` chỉ là phương án cuối: màn đã đóng sẵn thì cú đó quăng thêm một lần.
 - Màn "Rewards!" là kết quả của cá thường, không có thanh trượt. Thấy nút câu tối sau khi cần đã quăng thì tính một lượt thành công. Popup lúc cần chưa quăng không tính lượt.
-- Tool dừng khi: không nhận ra màn hình quá lâu, bấm quăng ba lần không phản hồi, không đổi được hệ số, hết rod.
+- Bấm Dừng lúc chưa quăng thì dừng ngay. Đang câu thì câu nốt lượt đó rồi dừng, không quăng thêm. Màn kết quả hoặc Time's up còn mở thì đóng nốt. Màn đó không đổi sau 12 giây thì dừng dù chưa về màn chờ quăng.
+- Tool cũng dừng khi: không nhận ra màn hình quá lâu, bấm quăng ba lần không phản hồi, không đổi được hệ số, hết rod.
 
 Rủi ro: game có thể coi đây là thao tác tự động và khóa tài khoản. Nên thử trên tài khoản phụ.
 

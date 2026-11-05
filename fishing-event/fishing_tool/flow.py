@@ -65,6 +65,10 @@ NARROW_LEAD = 0.12
 WIDE_LATENCY = 0.24
 WIDE_MIN_SAMPLES = 4
 WIDE_FIT_RMS = 16.0
+# Vùng rộng: ba ảnh khớp lệch ≤ 8px là bấm được, dù ba ảnh chưa đi một chiều (cú nảy nằm trong đó).
+# Chờ ảnh thứ 4–6 thì lỡ lượt mồi đang đi ngang và phải đợi cả vòng quay lại, khoảng 1–2 giây.
+WIDE_TIGHT_SAMPLES = 3
+WIDE_TIGHT_RMS = 8.0
 REFINE_HORIZON = 0.70
 MIN_SAMPLES_BEFORE_TAP = 5
 MAX_SAMPLES_BEFORE_TAP = 7
@@ -77,6 +81,8 @@ UNKNOWN_LIMIT = 12
 WAIT_WARN = 60.0
 NAV_LOAD = 3.0
 TIMESUP_TAP_AFTER = 6.0
+# Sau khi ghi xong lượt, còn chờ màn Time's up tự tắt (6 giây) rồi bấm đóng. Quá hạn này thì dừng dù màn chưa đổi.
+STOP_SETTLE = 12.0
 RESULT_SAMPLES = 4
 
 
@@ -163,6 +169,8 @@ class Runner:
         self._result_saved = 0
         self._dismiss_count = 0
         self._seen_gold: list[int] = []
+        self._stop_noted = False
+        self._settle_since: float | None = None
 
     # ----- vòng chính -----
 
@@ -254,6 +262,9 @@ class Runner:
                 self._wait_since = None
             if scene.kind in ("wait", "reel", "slider") and not self._cast_open:
                 # Cần đã được quăng mà tool không bấm (bắt đầu giữa chừng, hoặc cú bấm bỏ qua kết quả rơi vào nút câu).
+                # Đã có lệnh dừng thì không nhận thêm lượt mới.
+                if self.stop.is_set():
+                    raise Stopped()
                 self.stats.casts += 1
                 self._cast_open = True
                 self._cast_started = time.time()
@@ -307,6 +318,8 @@ class Runner:
             # Cần đã chạy qua các bước câu mà không thấy màn kết quả (game tự đóng). Ghi lại rồi sang lượt mới.
             self.log("Không thấy màn kết quả của lượt trước.")
             self._record("khong_ro", 0)
+        if self.stop.is_set() and not self._cast_open:
+            raise Stopped()
         if self._cast_open and time.time() - self._last_cast_tap < CAST_RETRY_AFTER:
             self._pause(0.2)
             return
@@ -447,14 +460,26 @@ class Runner:
         return float(landed - (row["vung_lo"] + row["vung_hi"]) / 2)
 
     def _nudge_from_miss(self, row: dict) -> None:
-        """Lệch cùng chiều vận tốc là lệnh tới muộn. Lần mồi quay lại phát lệnh sớm hơn đúng chừng đó."""
+        """Lệch cùng chiều vận tốc là lệnh tới muộn. Lần mồi quay lại phát lệnh sớm hơn đúng chừng đó.
+
+        Lệch lớn hơn nửa vùng là mô hình sai pha, không phải độ trễ cú bấm. Xê trễ theo số đó
+        đẩy cú sau ra khỏi vùng hẹp: lượt 5, vùng 36px lệch +29px rồi xê +0,08s, cú kế tới khi mồi còn ngoài vùng.
+        """
         err = row.get("err_px")
         if err is None:
             return
         vel = self.tracker.velocity(self._t0 + row["t_lenh"] + row["tre"])
         if vel is None or abs(vel) < 80:
             return
-        self._latency_nudge = min(0.08, max(-0.08, err / vel))
+        half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
+        if half > 0 and abs(err) > half:
+            self._latency_nudge = 0.0
+            self._trace("giữ trễ, mồi lệch quá nửa vùng nên không phải độ trễ")
+            return
+        cap = 0.08
+        if half > 0:
+            cap = min(0.08, max(0.015, (0.35 * half) / abs(vel)))
+        self._latency_nudge = min(cap, max(-cap, err / vel))
         self._trace(f"chỉnh trễ {self._latency_nudge:+.2f}s cho lần mồi quay lại")
 
     def _on_slider(self, img, scene, started, ended) -> None:
@@ -518,8 +543,14 @@ class Runner:
             offset = 0.0
             latency = self._command_latency(narrow=True)
         else:
-            # Ba ảnh một chiều, hoặc bốn ảnh khớp, là bấm được. Không đợi đủ năm ảnh.
-            early = clean or (
+            # Ba ảnh khớp chặt, ba ảnh một chiều, hoặc bốn ảnh khớp, là bấm được. Không đợi đủ năm ảnh.
+            tight = (
+                count >= WIDE_TIGHT_SAMPLES
+                and fit_now is not None
+                and fit_now[2] <= WIDE_TIGHT_RMS
+                and self.tracker.confident()
+            )
+            early = clean or tight or (
                 count >= WIDE_MIN_SAMPLES
                 and fit_now is not None
                 and fit_now[2] <= WIDE_FIT_RMS
@@ -925,9 +956,28 @@ class Runner:
             return
         self._sleep_until(time.time() + seconds)
 
+    def _note_deferred_stop(self) -> None:
+        if self._stop_noted:
+            return
+        self._stop_noted = True
+        self.log("Đang câu dở. Câu nốt lượt này rồi dừng.")
+
     def _check(self) -> None:
-        if self.stop.is_set():
-            raise Stopped()
+        """Dừng ngay khi chưa vào lượt. Đang câu thì câu nốt, đóng màn kết quả, rồi mới dừng."""
+        if not self.stop.is_set():
+            self._settle_since = None
+            return
+        if self._cast_open:
+            self._note_deferred_stop()
+            self._settle_since = None
+            return
+        if self._last_kind in ("timesup", "result"):
+            self._note_deferred_stop()
+            if self._settle_since is None:
+                self._settle_since = time.time()
+            if time.time() - self._settle_since < STOP_SETTLE:
+                return
+        raise Stopped()
 
 
 def _num(value, spec: str) -> str:
@@ -953,11 +1003,14 @@ def _pick_gold(golds: list[int]) -> int:
     """Chọn số Gold từ vài ảnh kết quả.
 
     Số chỉ nằm trên ảnh đầu rồi biến, nên một lần đọc từ 10 trở lên vẫn nhận (1.210 đọc được một lần là thật).
-    Một chữ số lẻ (như 9 do tia sáng) chỉ nhận khi lặp lại ở hai ảnh. Nhiều số khác nhau thì lấy số lớn hơn, vì số nhỏ thường là đọc hụt chữ.
+    Một chữ số lẻ (như 9 do tia sáng, hoặc mảnh đồng xu đọc thành 2) chỉ nhận khi lặp lại ở hai ảnh và không có số dài hơn.
+    Số từ 10 trở lên thắng chữ số lẻ dù chữ số lẻ xuất hiện nhiều lần hơn: lượt +118 bị đọc thành [118, 118, 2, 2, 2, 2].
     """
     if not golds:
         return 0
-    best = max(set(golds), key=lambda value: (golds.count(value), value))
-    if golds.count(best) >= 2 or best >= 10:
+    long = [value for value in golds if value >= 10]
+    pool = long or golds
+    best = max(set(pool), key=lambda value: (pool.count(value), value))
+    if pool.count(best) >= 2 or best >= 10:
         return best
     return 0

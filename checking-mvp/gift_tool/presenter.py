@@ -43,6 +43,7 @@ def fish_step(message: str) -> str | None:
         ("Không thấy màn kết quả", "Đang đọc kết quả"),
         ("Có popup", "Có popup chen vào"),
         ("Chưa nhận ra", "Chưa nhận ra màn hình"),
+        ("Đang câu dở", "Câu nốt lượt này rồi dừng"),
         ("Tự câu cá", "Đang chuẩn bị"),
     )
     for prefix, step in rules:
@@ -224,11 +225,15 @@ class Presenter:
         self.worker.start()
 
     def request_stop(self) -> None:
-        if not self.running:
+        if not self.running or self.stop.is_set():
             return
         self.stop.set()
-        self.write("Sẽ dừng sau bước hiện tại.")
-        self._status("Sẽ dừng sau bước hiện tại.")
+        if self.mode == "fish":
+            self.write("Nếu đang câu dở thì câu nốt lượt này rồi dừng.")
+            self.view.set_fish_hold(True)
+        else:
+            self.write("Sẽ dừng sau bước hiện tại.")
+            self._status("Sẽ dừng sau bước hiện tại.")
 
     def capture_only(self) -> None:
         threading.Thread(target=self._capture_only, daemon=True).start()
@@ -392,7 +397,7 @@ class Presenter:
 
     def _ready_status(self) -> None:
         if self.mode == "fish":
-            self._status("Sẵn sàng", ["Dừng khi đủ lượt hoặc hết rod"])
+            self._status("Sẵn sàng", ["Dừng sau lượt đang câu, hoặc khi đủ lượt, hết rod"])
         elif self.mode == "rally":
             self._status("Sẵn sàng", ["Chạy đến khi dừng"])
         else:
