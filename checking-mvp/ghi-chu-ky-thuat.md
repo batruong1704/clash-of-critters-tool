@@ -148,7 +148,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |
 | `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
 | `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
-| `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow` |
+| `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow`, `sv-ttk` (giao diện Sun Valley cho Tkinter, `gift_tool/gui.py`) |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
 

@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
+
+import sv_ttk
 
 from gift_tool.adb_client import AdbClient
 from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS, Runner
 from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, draw_hits, imwrite
 from rally_tool.flow import Runner as RallyRunner
+
+# Tool tự câu cá nằm ở fishing-event/ cạnh thư mục này. Chỉ nạp khi bấm chạy để thiếu thư mục đó không làm hỏng tab khác.
+FISHING_DIR = Path(__file__).resolve().parent.parent.parent / "fishing-event"
+FISHING_MULTIPLIERS = ("1", "2", "3", "5", "10", "20", "50", "100", "200")
+FISHING_CASTS_DEFAULT = 10
+FISHING_CASTS_MAX = 100000
 
 WINDOW_WIDTH = 840
 COMPACT_HEIGHT = 760
@@ -21,16 +30,15 @@ OVERVIEW_LOG_LINES = 10
 DETAIL_LOG_LINES = 16
 HINT_WRAP = 460
 UID_BOX_LINES = 7
-APP_BG = "#f3f4f6"
+# Màu theo bảng của sv-ttk (Sun Valley, giao diện Windows 11) bản sáng.
+APP_BG = "#fafafa"
 CARD_BG = "#ffffff"
-BORDER = "#e4e7ec"
-ACCENT = "#1d4ed8"
-ACCENT_HOVER = "#1e40af"
-ACCENT_PRESS = "#1e3a8a"
-UI_FONT = ("Segoe UI", 10)
-UI_FONT_BOLD = ("Segoe UI", 10, "bold")
-TITLE_FONT = ("Segoe UI", 18, "bold")
-HINT_FONT = ("Segoe UI", 9)
+BORDER = "#e0e0e0"
+ACCENT = "#005fb8"
+# Font đặt tên sẵn trong sv-ttk. Riêng ô nhập UID và log dùng Consolas cho thẳng hàng.
+FONT_TITLE = "SunValleySubtitleFont"
+FONT_BODY_STRONG = "SunValleyBodyStrongFont"
+FONT_CAPTION = "SunValleyCaptionFont"
 ID_FONT = ("Consolas", 12)
 UID_MIN_LEN = 4
 UID_MAX_LEN = 15
@@ -44,7 +52,8 @@ LOG_OK = "#0e7a3d"
 LOG_WARN = "#8a5a00"
 LOG_BAD = "#b42318"
 LOG_FONT = ("Consolas", 10)
-OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào")
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào", "câu được cá", "trúng")
+FISH_HINT = "Màn dọc. Đang ở sân, Pinball hay Fishing Contest đều được, tool tự đi tới màn câu. Không bấm vào emulator khi tool chạy."
 GIFT_HINT = "Màn hình dọc. Tool tự mở tab Add New nếu đang ở sân hoặc Goldrush. Lần đầu chỉ chạy 1–2 UID."
 RALLY_HINT = "Màn dọc. Đang ở sân hoặc trong Goldrush đều được. Ra khỏi mode thì bấm lại nút Goldrush. Chỉ bấm nút xanh, bỏ nút xám, không tạo rally."
 BAD_MARKS = (
@@ -59,8 +68,15 @@ BAD_MARKS = (
     "hết giờ",
     "hết nhịp",
     "emulator đang ngang",
+    "chưa nhận ra",
+    "không nhận ra",
+    "hết rod",
+    "không đổi được",
 )
 WARN_MARKS = (
+    "trượt",
+    "màn thưởng",
+    "không thấy màn kết quả",
     "không thấy người chơi",
     "không có quà",
     "sân đứng yên",
@@ -126,151 +142,22 @@ def log_tone(line: str) -> str:
 
 
 def apply_theme(root: tk.Tk) -> None:
-    """Clam cho phép tô nút. Vista thì nút chính không khác nút phụ."""
+    """sv-ttk lo nút, ô nhập, thẻ và công tắc. Ở đây chỉ thêm chữ tiêu đề, chữ phụ và nút Dừng."""
+    sv_ttk.set_theme("light", root)
+    root.configure(bg=APP_BG)
     style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure(".", background=APP_BG, foreground=LOG_FG, font=UI_FONT)
-    style.configure("TFrame", background=APP_BG)
-    style.configure("Card.TFrame", background=CARD_BG)
-    style.configure("TLabel", background=APP_BG, foreground=LOG_FG, font=UI_FONT)
-    style.configure("Title.TLabel", background=APP_BG, foreground=LOG_FG, font=TITLE_FONT)
-    style.configure("Hint.TLabel", background=APP_BG, foreground=LOG_MUTED, font=HINT_FONT)
-    style.configure("Section.TLabel", background=APP_BG, foreground=LOG_MUTED, font=UI_FONT_BOLD)
-    style.configure("CardSection.TLabel", background=CARD_BG, foreground=LOG_MUTED, font=UI_FONT_BOLD)
-    style.configure("Card.TLabel", background=CARD_BG, foreground=LOG_FG, font=UI_FONT)
-    style.configure("CardHint.TLabel", background=CARD_BG, foreground=LOG_MUTED, font=HINT_FONT)
-    style.configure("Status.TLabel", background=APP_BG, foreground=LOG_MUTED, font=HINT_FONT)
-    style.configure("StatusOn.TLabel", background=APP_BG, foreground=LOG_OK, font=UI_FONT_BOLD)
-    style.configure(
-        "Segment.TButton",
-        background=APP_BG,
-        foreground=LOG_MUTED,
-        borderwidth=1,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        focusthickness=0,
-        focuscolor=APP_BG,
-        padding=(14, 8),
-        font=UI_FONT,
-    )
-    style.map("Segment.TButton", background=[("active", "#e5e7eb")])
-    style.configure(
-        "SegmentOn.TButton",
-        background=CARD_BG,
-        foreground=LOG_FG,
-        borderwidth=1,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        focusthickness=0,
-        focuscolor=CARD_BG,
-        padding=(14, 8),
-        font=UI_FONT_BOLD,
-    )
-    style.map("SegmentOn.TButton", background=[("active", CARD_BG)])
-    style.configure(
-        "TEntry",
-        fieldbackground=CARD_BG,
-        foreground=LOG_FG,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        padding=8,
-        font=ID_FONT,
-    )
-    style.configure(
-        "TSpinbox",
-        fieldbackground=CARD_BG,
-        foreground=LOG_FG,
-        bordercolor=BORDER,
-        arrowcolor=LOG_FG,
-        padding=6,
-        font=ID_FONT,
-    )
-    style.configure(
-        "Primary.TButton",
-        background=ACCENT,
-        foreground="#ffffff",
-        borderwidth=1,
-        bordercolor=ACCENT_PRESS,
-        lightcolor=ACCENT_PRESS,
-        darkcolor=ACCENT_PRESS,
-        focusthickness=0,
-        focuscolor=ACCENT,
-        padding=(18, 8),
-        font=UI_FONT_BOLD,
-    )
-    style.map(
-        "Primary.TButton",
-        background=[
-            ("disabled", "#e5e7eb"),
-            ("pressed", ACCENT_PRESS),
-            ("active", ACCENT_HOVER),
-        ],
-        foreground=[("disabled", "#6b7280")],
-    )
-    style.configure(
-        "Stop.TButton",
-        background=APP_BG,
-        foreground=LOG_MUTED,
-        borderwidth=1,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        focusthickness=0,
-        focuscolor=APP_BG,
-        padding=(14, 8),
-        font=UI_FONT_BOLD,
-    )
-    style.map(
-        "Stop.TButton",
-        background=[("disabled", APP_BG), ("active", "#fde8e8"), ("!disabled", "#fde8e8")],
-        foreground=[("disabled", "#9ca3af"), ("!disabled", LOG_BAD)],
-    )
-    style.configure(
-        "Ghost.TButton",
-        background=APP_BG,
-        foreground=LOG_FG,
-        borderwidth=1,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        focusthickness=0,
-        focuscolor=APP_BG,
-        padding=(10, 8),
-        font=UI_FONT,
-    )
-    style.map("Ghost.TButton", background=[("active", "#e5e7eb"), ("pressed", "#d1d5db")])
-    style.configure(
-        "CardGhost.TButton",
-        background=CARD_BG,
-        foreground=LOG_FG,
-        borderwidth=1,
-        bordercolor=BORDER,
-        lightcolor=BORDER,
-        darkcolor=BORDER,
-        focusthickness=0,
-        focuscolor=CARD_BG,
-        padding=(10, 6),
-        font=UI_FONT,
-    )
-    style.map("CardGhost.TButton", background=[("active", "#f3f4f6"), ("pressed", "#e5e7eb")])
+    style.configure("Title.TLabel", font=FONT_TITLE)
+    style.configure("Hint.TLabel", foreground=LOG_MUTED, font=FONT_CAPTION)
+    style.configure("Section.TLabel", foreground=LOG_MUTED, font=FONT_BODY_STRONG)
+    style.configure("Status.TLabel", foreground=LOG_MUTED, font=FONT_CAPTION)
+    style.configure("StatusOn.TLabel", foreground=LOG_OK, font=FONT_BODY_STRONG)
+    style.configure("Stop.TButton", foreground=LOG_BAD)
+    style.map("Stop.TButton", foreground=[("disabled", "#a0a0a0")])
 
 
-def bordered(parent: tk.Misc) -> tuple[tk.Frame, ttk.Frame]:
-    """Viền 1 px. ttk.Frame không vẽ cạnh khi chỉ đổi màu nền."""
-    shell = tk.Frame(
-        parent,
-        bg=BORDER,
-        highlightthickness=1,
-        highlightbackground=BORDER,
-        highlightcolor=BORDER,
-        bd=0,
-    )
-    inner = ttk.Frame(shell, style="Card.TFrame", padding=14)
-    inner.pack(fill="both", expand=True)
-    return shell, inner
+def card(parent: tk.Misc, padding: int = 16) -> ttk.Frame:
+    """Thẻ bo góc có viền của sv-ttk."""
+    return ttk.Frame(parent, style="Card.TFrame", padding=padding)
 
 
 class App:
@@ -315,27 +202,24 @@ class App:
 
         switch = ttk.Frame(frame)
         switch.pack(anchor="w", pady=(16, 0))
-        self.list_seg = ttk.Button(
-            switch, text="Nhập danh sách", style="SegmentOn.TButton", command=self.show_list
-        )
-        self.list_seg.pack(side="left")
-        self.scan_seg = ttk.Button(switch, text="Quét ID", style="Segment.TButton", command=self.show_scan)
-        self.scan_seg.pack(side="left", padx=(4, 0))
-        self.rally_seg = ttk.Button(
-            switch, text="Auto join rally", style="Segment.TButton", command=self.show_rally
-        )
-        self.rally_seg.pack(side="left", padx=(4, 0))
+        self.mode_var = tk.StringVar(value="list")
+        self.list_seg = self._segment(switch, "Nhập danh sách", "list", first=True)
+        self.scan_seg = self._segment(switch, "Quét ID", "scan")
+        self.rally_seg = self._segment(switch, "Auto join rally", "rally")
+        self.fish_seg = self._segment(switch, "Tự câu cá", "fish")
 
-        card_shell, self.card = bordered(frame)
-        card_shell.pack(fill="x", pady=(8, 0))
-        list_tab = ttk.Frame(self.card, style="Card.TFrame")
-        scan_tab = ttk.Frame(self.card, style="Card.TFrame")
-        rally_tab = ttk.Frame(self.card, style="Card.TFrame")
+        self.card = card(frame)
+        self.card.pack(fill="x", pady=(10, 0))
+        list_tab = ttk.Frame(self.card)
+        scan_tab = ttk.Frame(self.card)
+        rally_tab = ttk.Frame(self.card)
+        fish_tab = ttk.Frame(self.card)
         self.list_page = list_tab
         self.scan_page = scan_tab
         self.rally_page = rally_tab
+        self.fish_page = fish_tab
 
-        ttk.Label(list_tab, text="Mỗi dòng một UID", style="Card.TLabel").pack(anchor="w")
+        ttk.Label(list_tab, text="Mỗi dòng một UID").pack(anchor="w")
         self.ids = tk.Text(
             list_tab,
             height=UID_BOX_LINES,
@@ -352,13 +236,13 @@ class App:
             insertbackground=LOG_FG,
         )
         self.ids.pack(fill="x", pady=(8, 0))
-        ttk.Button(list_tab, text="Nạp file txt", style="CardGhost.TButton", command=self.load_file).pack(
+        ttk.Button(list_tab, text="Nạp file txt", command=self.load_file).pack(
             anchor="w", pady=(8, 0)
         )
 
         scan_tab.columnconfigure(0, weight=1)
-        ttk.Label(scan_tab, text="ID đầu", style="CardHint.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(scan_tab, text="Số lần", style="CardHint.TLabel").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Label(scan_tab, text="ID đầu", style="Hint.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(scan_tab, text="Số lần", style="Hint.TLabel").grid(row=0, column=1, sticky="w", padx=(12, 0))
         self.scan_start = ttk.Entry(scan_tab, width=18, font=ID_FONT)
         self.scan_start.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         self.scan_count = ttk.Spinbox(scan_tab, from_=1, to=SCAN_COUNT_MAX, width=8, font=ID_FONT)
@@ -367,61 +251,97 @@ class App:
         ttk.Label(
             scan_tab,
             text="ID đầu là lượt 1. Mỗi lần sau cộng thêm 1.",
-            style="CardHint.TLabel",
+            style="Hint.TLabel",
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-        ttk.Label(rally_tab, text="Trong Goldrush, mở chat Frostnip League.", style="Card.TLabel").pack(anchor="w")
+        ttk.Label(rally_tab, text="Trong Goldrush, mở chat Frostnip League.").pack(anchor="w")
         ttk.Label(
             rally_tab,
             text="Thấy nút Join xanh trong chat thì bấm ngay. Không thấy thì mới kéo khoảng 10 tin gần nhất. Nhiều người cùng một ô thì bấm hết, rồi kéo xuống nếu danh sách còn dài.",
-            style="CardHint.TLabel",
+            style="Hint.TLabel",
             wraplength=520,
         ).pack(anchor="w", pady=(8, 0))
         ttk.Label(
             rally_tab,
             text="Không thấy nút xanh thì kéo tới tin mới nhất. Tìm ở tin cũ xong thì bấm mũi tên tím bên phải để xuống. Hộp hoàn thành rally thì bấm Confirm để đóng. Chạy đến khi bấm Dừng.",
-            style="CardHint.TLabel",
+            style="Hint.TLabel",
             wraplength=520,
         ).pack(anchor="w", pady=(8, 0))
 
+        fish_tab.columnconfigure(0, weight=1)
+        ttk.Label(fish_tab, text="Số lượt câu", style="Hint.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(fish_tab, text="Hệ số", style="Hint.TLabel").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.fish_casts = ttk.Spinbox(fish_tab, from_=1, to=FISHING_CASTS_MAX, width=10, font=ID_FONT)
+        self.fish_casts.set(str(FISHING_CASTS_DEFAULT))
+        self.fish_casts.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.fish_mult = ttk.Combobox(fish_tab, values=FISHING_MULTIPLIERS, width=6, font=ID_FONT)
+        self.fish_mult.set("1")
+        self.fish_mult.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(4, 0))
+        ttk.Label(
+            fish_tab,
+            text="Để trống hệ số là x1. Hệ số xN tốn N rod mỗi lần quăng. Tool dừng khi đủ lượt hoặc hết rod. Vòng đổi hệ số của game hiện có đến x100, chưa nhận ra x200.",
+            style="Hint.TLabel",
+            wraplength=520,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Label(
+            fish_tab,
+            text="Bấm Reel it in, rồi bấm thanh trượt khi mồi vào vùng vàng. Đọc Gold ở màn kết quả. Bảng chi tiết nằm ở fishing-event/logs.",
+            style="Hint.TLabel",
+            wraplength=520,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
         list_tab.pack(fill="x")
         self.root.update_idletasks()
-        page_height = max(page.winfo_reqheight() for page in (list_tab, scan_tab, rally_tab))
+        page_height = max(page.winfo_reqheight() for page in (list_tab, scan_tab, rally_tab, fish_tab))
         self.card.pack_propagate(False)
-        self.card.configure(height=page_height + 28)
+        self.card.configure(height=page_height + 44)
 
         bar = ttk.Frame(frame)
         bar.pack(fill="x", pady=(14, 0))
-        self.primary_btn = ttk.Button(bar, text="Bắt đầu", style="Primary.TButton", command=self.run_current)
+        self.primary_btn = ttk.Button(bar, text="Bắt đầu", style="Accent.TButton", command=self.run_current)
         self.primary_btn.pack(side="left")
         self.stop_btn = ttk.Button(
             bar, text="Dừng", style="Stop.TButton", command=self.request_stop, state="disabled"
         )
         self.stop_btn.pack(side="left", padx=(8, 0))
-        self.detail_btn = ttk.Button(bar, text="Xem chi tiết log", style="Ghost.TButton", command=self.toggle_detail)
+        self.detail_btn = ttk.Button(bar, text="Xem chi tiết log", command=self.toggle_detail)
         self.detail_btn.pack(side="right")
-        ttk.Button(bar, text="Kiểm tra nút", style="Ghost.TButton", command=self.preview).pack(side="right")
-        ttk.Button(bar, text="Chụp thử", style="Ghost.TButton", command=self.capture_only).pack(side="right")
+        ttk.Button(bar, text="Kiểm tra nút", command=self.preview).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text="Chụp thử", command=self.capture_only).pack(side="right", padx=(0, 6))
 
         self.progress = tk.StringVar(value=f"Sẵn sàng · dừng sau {MAX_GIFTS} quà")
         ttk.Label(frame, textvariable=self.progress).pack(anchor="w", pady=(12, 0))
 
-        log_shell, log_card = bordered(frame)
-        log_shell.pack(fill="x", pady=(14, 0))
-        ttk.Label(log_card, text="TỔNG QUAN", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
+        log_card = card(frame)
+        log_card.pack(fill="x", pady=(14, 0))
+        ttk.Label(log_card, text="Tổng quan", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
         self.log_box = tk.Text(
             log_card, height=OVERVIEW_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.log_box.pack(fill="x")
         self._paint_log(self.log_box)
 
-        self.detail_frame, detail_card = bordered(self.body)
-        ttk.Label(detail_card, text="CHI TIẾT", style="CardSection.TLabel").pack(anchor="w", pady=(0, 8))
+        self.detail_frame = card(self.body)
+        detail_card = self.detail_frame
+        ttk.Label(detail_card, text="Chi tiết", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
         self.detail_box = tk.Text(
             detail_card, height=DETAIL_LOG_LINES, state="disabled", font=LOG_FONT, wrap="word"
         )
         self.detail_box.pack(fill="both", expand=True)
         self._paint_log(self.detail_box)
+
+    def _segment(self, parent, text: str, value: str, first: bool = False) -> ttk.Radiobutton:
+        """Nút chuyển chế độ. Toggle.TButton của sv-ttk tô màu nhấn cho nút đang chọn."""
+        button = ttk.Radiobutton(
+            parent,
+            text=text,
+            value=value,
+            variable=self.mode_var,
+            style="Toggle.TButton",
+            command=lambda: self._select(value),
+        )
+        button.pack(side="left", padx=(0 if first else 6, 0))
+        return button
 
     def load_file(self):
         path = filedialog.askopenfilename(filetypes=[("Text", "*.txt"), ("Tất cả", "*.*")])
@@ -446,7 +366,9 @@ class App:
         self._begin(ids)
 
     def run_current(self):
-        if self.mode == "rally":
+        if self.mode == "fish":
+            self.start_fishing()
+        elif self.mode == "rally":
             self.start_rally()
         elif self.mode == "scan":
             self.start_scan()
@@ -469,12 +391,18 @@ class App:
         self.list_page.pack_forget()
         self.scan_page.pack_forget()
         self.rally_page.pack_forget()
-        self.list_seg.configure(style="Segment.TButton")
-        self.scan_seg.configure(style="Segment.TButton")
-        self.rally_seg.configure(style="Segment.TButton")
+        self.fish_page.pack_forget()
+        self.mode_var.set(mode)
+        if mode == "fish":
+            self.fish_page.pack(fill="x")
+            self.primary_btn.configure(text="Bắt đầu")
+            self.title_var.set("Tự câu cá")
+            self.hint_var.set(FISH_HINT)
+            self.root.title("Tự câu cá")
+            self.progress.set("Sẵn sàng · câu đủ số lượt hoặc đến khi hết rod")
+            return
         if mode == "scan":
             self.scan_page.pack(fill="x")
-            self.scan_seg.configure(style="SegmentOn.TButton")
             self.primary_btn.configure(text="Quét")
             self.title_var.set("Nhận quà MVP")
             self.hint_var.set(GIFT_HINT)
@@ -483,7 +411,6 @@ class App:
             return
         if mode == "rally":
             self.rally_page.pack(fill="both", expand=True)
-            self.rally_seg.configure(style="SegmentOn.TButton")
             self.primary_btn.configure(text="Bắt đầu")
             self.title_var.set("Auto join rally")
             self.hint_var.set(RALLY_HINT)
@@ -491,7 +418,6 @@ class App:
             self.progress.set("Sẵn sàng · join rally đến khi dừng")
             return
         self.list_page.pack(fill="x")
-        self.list_seg.configure(style="SegmentOn.TButton")
         self.primary_btn.configure(text="Bắt đầu")
         self.title_var.set("Nhận quà MVP")
         self.hint_var.set(GIFT_HINT)
@@ -530,6 +456,29 @@ class App:
         self.worker = threading.Thread(target=self._run_rally, daemon=True)
         self.worker.start()
 
+    def start_fishing(self):
+        if self.worker and self.worker.is_alive():
+            return
+        try:
+            casts = int(self.fish_casts.get())
+        except ValueError:
+            self.write("Số lượt câu phải là số nguyên dương.")
+            return
+        if not 1 <= casts <= FISHING_CASTS_MAX:
+            self.write(f"Số lượt câu từ 1 đến {FISHING_CASTS_MAX}.")
+            return
+        text = self.fish_mult.get().strip().lower().lstrip("x") or "1"
+        if text not in FISHING_MULTIPLIERS:
+            self.write(f"Hệ số chỉ nhận một trong: {', '.join(FISHING_MULTIPLIERS)}.")
+            return
+        self.fish_mult.set(text)
+        self.stop.clear()
+        self._clear(self.detail_box)
+        self._lock()
+        self.progress.set(f"Đang câu 0/{casts} lượt")
+        self.worker = threading.Thread(target=self._run_fishing, args=(casts, int(text)), daemon=True)
+        self.worker.start()
+
     def _begin(self, ids: list[str]):
         self.stop.clear()
         self._clear(self.detail_box)
@@ -542,14 +491,14 @@ class App:
         self.running = True
         self.primary_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-        for button in (self.list_seg, self.scan_seg, self.rally_seg):
+        for button in (self.list_seg, self.scan_seg, self.rally_seg, self.fish_seg):
             button.configure(state="disabled")
 
     def _unlock(self):
         self.running = False
         self.primary_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        for button in (self.list_seg, self.scan_seg, self.rally_seg):
+        for button in (self.list_seg, self.scan_seg, self.rally_seg, self.fish_seg):
             button.configure(state="normal")
 
     def toggle_detail(self):
@@ -620,6 +569,38 @@ class App:
             counts = RallyRunner(adb, log, self.stop, self.finder).run()
             summary = f"Xong. Đã xin {counts['xin']} rally."
             self.root.after(0, lambda text=summary: self.progress.set(text))
+        except Exception as exc:
+            self.write(f"Lỗi: {exc}")
+            self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))
+        finally:
+            self.root.after(0, self._unlock)
+
+    def _run_fishing(self, casts: int, multiplier: int):
+        try:
+            if str(FISHING_DIR) not in sys.path:
+                sys.path.insert(0, str(FISHING_DIR))
+            try:
+                from fishing_tool.device import FishAdb
+                from fishing_tool.flow import Runner as FishRunner
+            except ImportError as exc:
+                raise RuntimeError(f"Không nạp được tool câu cá ở {FISHING_DIR}: {exc}") from exc
+
+            adb = FishAdb()
+            serial = adb.ensure_device()
+            self.write(f"Đã nối {serial}")
+            self.root.after(0, lambda s=serial: self._set_device(s))
+
+            def show(stats):
+                rods = "?" if stats.rods is None else stats.rods
+                text = (
+                    f"Câu {stats.casts}/{casts} · thành công {stats.caught} · hết giờ {stats.failed} · "
+                    f"Gold {stats.gold} · rod còn {rods}"
+                )
+                self.root.after(0, lambda t=text: self.progress.set(t))
+
+            runner = FishRunner(adb, self.write, self.stop, casts, multiplier, on_stats=show)
+            stats = runner.run()
+            show(stats)
         except Exception as exc:
             self.write(f"Lỗi: {exc}")
             self.root.after(0, lambda: self.progress.set("Dừng vì lỗi"))

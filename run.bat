@@ -11,7 +11,7 @@ exit /b 0
 
 :ensure
 if exist "%PY%" (
-    "%PY%" -c "import cv2,numpy,PIL" >nul 2>&1
+    "%PY%" -c "import cv2,numpy,PIL,sv_ttk" >nul 2>&1
     if not errorlevel 1 exit /b 0
     "%PY%" -c "import sys" >nul 2>&1
     if errorlevel 1 rmdir /s /q ".venv"
