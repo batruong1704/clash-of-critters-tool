@@ -9,8 +9,8 @@ from __future__ import annotations
 import time
 
 from gift_tool.adb_client import AdbClient
-from gift_tool.paths import LOGS
 from gift_tool.vision import Finder, scene_signature, signature_diff
+from rally_tool.paths import LOGS
 
 from rally_tool.vision import (
     Reading,

@@ -1,11 +1,14 @@
 """Bộ nhớ học qua các phiên: ghi từng cú bấm thanh trượt, rút ra độ trễ thật của cú bấm.
 
-Cú bấm đi từ lệnh ADB tới game mất một khoảng L (chừng 0.3 giây, hơi dao động). Sau mỗi cú bấm, tool biết kết quả
-(trúng hay trượt) và biết đường đi của mồi nhờ các mẫu của cả thanh. Với mỗi L thử, tool kiểm tra: "nếu cú bấm tới game
-sau L giây thì mồi có nằm trong vùng vàng không", rồi so với kết quả thật. Các L cho ra kết quả khớp được lưu lại
-cùng cú bấm. Độ trễ tốt nhất là L khớp với nhiều cú bấm nhất, tính trên các cú bấm gần đây.
+Cú bấm đi từ lệnh ADB tới game mất một khoảng L (đo trên các lượt chiều 5/11 là khoảng 0,14 giây).
+Sau mỗi cú bấm, tool thử nhiều L và lưu những L khiến mồi nằm trong hoặc ngoài vùng vàng đúng với kết quả.
 
-Cách này học được cả từ cú trượt và biết lệch về phía nào, không cần thử mò từng mức độ lệch.
+Độ trễ chỉ rút từ cú trúng. Với cú trúng, các L khớp tạo một đoạn liền (lúc mồi đi ngang vùng vàng). Giữa đoạn đó
+là lúc mồi ở giữa vùng. Trung vị của các lúc này, trên các cú trúng gần đây, là độ trễ dùng cho lần bấm sau.
+
+Cú trượt không được đưa vào. Lúc trượt, gần như mọi L đều "khớp" vì mồi chỉ ở trong vùng một khoảnh ngắn, nên phiếu
+bầu bị dàn đều từ -0,3 đến 0,9 giây và trung vị của cả dải đó trôi về 0. Phiên 13:38 tool đã bấm với độ trễ 0 và âm,
+mồi ra khỏi vùng trước khi game nhận cú bấm.
 """
 
 from __future__ import annotations
@@ -20,13 +23,37 @@ from fishing_tool.paths import DATA
 
 MEMORY_FILE = DATA / "hoc.json"
 KEEP_TAPS = 400  # số cú bấm giữ lại trong file
-WINDOW = 120  # chỉ xét chừng này cú bấm có dữ liệu đường mồi gần nhất khi tính độ trễ
+HIT_WINDOW = 40  # chỉ lấy chừng này cú trúng gần nhất khi tính độ trễ
 MIN_TAPS = 8  # ít hơn thì chưa tin, dùng độ trễ mặc định
 LATENCY_GRID = tuple(round(float(x), 2) for x in np.arange(-0.30, 0.91, 0.02))
 FIT_RMS_MAX = 40.0  # đường mồi khớp tệ hơn mức này (px) thì không dùng để học
 MIN_SAMPLES = 6
 # Vùng ăn thật chỉ nhỏ hơn vùng vàng nhìn thấy: khớp 95% khi chỉ tính 50-80% nửa vùng, còn 90% khi tính cả vùng.
 ZONE_TRUST = 0.7  # số mẫu tối thiểu của thanh để học từ cú bấm đó
+
+
+def _hit_center(tap: dict) -> float | None:
+    """Giữa khoảng thời gian mồi nằm trong vùng vàng ở một cú trúng. None nếu cú này không chỉ ra được lúc bấm tới."""
+    if not tap.get("hit") or not tap.get("ok"):
+        return None
+    values = sorted({round(float(value), 2) for value in tap["ok"]})
+    if not values:
+        return None
+    runs = [[values[0]]]
+    for value in values[1:]:
+        if abs(value - runs[-1][-1] - 0.02) < 0.005:
+            runs[-1].append(value)
+        else:
+            runs.append([value])
+    run = max(runs, key=len)
+    span = run[-1] - run[0]
+    # Ngắn hơn 0,06s là nhiễu một mẫu. Dài hơn 0,55s thì mồi bị coi là nằm trong vùng gần cả vòng, không chỉ ra lúc tới.
+    if span < 0.06 or span > 0.55:
+        return None
+    center = float(np.median(run))
+    if center < 0.05 or center > 0.40:
+        return None
+    return center
 
 
 def consistent_latencies(tracker, tap_time: float, zone: tuple[int, int], hit: bool) -> list[float] | None:
@@ -78,19 +105,11 @@ class Memory:
         return [t for t in self.taps if t["hit"]]
 
     def latency(self) -> tuple[float, int] | None:
-        """(độ trễ tốt nhất, số cú bấm đã dùng). None khi chưa đủ dữ liệu."""
-        usable = [t["ok"] for t in self.taps if t.get("ok")][-WINDOW:]
-        if len(usable) < MIN_TAPS:
+        """(độ trễ tốt nhất, số cú trúng đã dùng). None khi chưa đủ cú trúng rõ ràng."""
+        centers = [center for tap in self.taps if (center := _hit_center(tap)) is not None][-HIT_WINDOW:]
+        if len(centers) < MIN_TAPS:
             return None
-        votes = np.zeros(len(LATENCY_GRID))
-        index = {value: i for i, value in enumerate(LATENCY_GRID)}
-        for good in usable:
-            for value in good:
-                votes[index[value]] += 1
-        best = votes.max()
-        # Vùng phẳng quanh đỉnh: lấy điểm giữa, vì dao động nên đỉnh đơn lẻ dễ lệch.
-        plateau = np.array(LATENCY_GRID)[votes >= best - max(1.0, 0.03 * len(usable))]
-        return float(np.median(plateau)), len(usable)
+        return float(np.median(centers)), len(centers)
 
     def record(
         self,

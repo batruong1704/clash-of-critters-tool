@@ -136,7 +136,11 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | Đường dẫn | Việc |
 |---|---|
 | `main.py`, `run.bat` | Mở cửa sổ tool |
-| `gift_tool/gui.py` | Nút, ô dán UID, log |
+| `gift_tool/gui.py` | Ghép MVP: `App` là presenter |
+| `gift_tool/view.py` | Nút, ô dán UID, log. Không gọi ADB |
+| `gift_tool/presenter.py` | Nhận thao tác, kiểm tra ô nhập, gọi model, đẩy log lên view |
+| `gift_tool/model.py` | Nối ADB, chạy nhận quà, rally, câu cá, chụp và kiểm tra nút |
+| `../auto-join-rally/rally_tool/` | Vòng auto join rally. Cửa sổ gọi lúc bấm Bắt đầu |
 | `gift_tool/flow.py` | Luồng một UID, tự mò về ô nhập |
 | `gift_tool/vision.py` | So ảnh mẫu, đọc cấp |
 | `gift_tool/adb_client.py` | Chụp và bấm |
@@ -148,7 +152,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |
 | `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
 | `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
-| `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow`, `sv-ttk` (giao diện Sun Valley cho Tkinter, `gift_tool/gui.py`) |
+| `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow`, `sv-ttk` (giao diện Sun Valley cho Tkinter, `gift_tool/view.py`) |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
 

@@ -47,11 +47,15 @@ TAP_LATENCY = 0.22
 CAPTURE_FRACTION = 0.40
 # Sau cú bấm, ảnh đầu có thể chụp trước khi game nhận kịp. Bỏ qua quyết định trong khoảng này.
 TAP_COOLDOWN = 0.9
-# Độ trễ của cú bấm, từ lúc phát lệnh tới lúc game nhận (giây). Đo trên 52 cú bấm thật bằng tools/phan_tich.py:
-# đúng 95% ở khoảng 0.30s khi coi vùng ăn thật là 70% nửa vùng vàng (memory.ZONE_TRUST). Tool tự dò lại số này sau mỗi cú bấm và nhớ qua các phiên.
-BASE_LATENCY = 0.30
+# Độ trễ của cú bấm, từ lúc phát lệnh tới lúc game nhận (giây). Các lượt chiều 5/11 (bấm bằng tap_fast) có mồi
+# ở giữa vùng vàng khoảng 0,14s sau lệnh. 0,30s là số cũ, đo trước khi bấm qua shell giữ sẵn, và làm cú bấm tới muộn.
+# Tool tự dò lại số này từ các cú trúng và nhớ qua các phiên. Khi chưa đủ cú trúng thì dùng số này.
+BASE_LATENCY = 0.15
 # Thử lệch thêm khi trượt liên tiếp (giây, dương là bấm muộn hơn).
 MISS_OFFSETS = (0.0, 0.05, -0.05, 0.10, -0.10, 0.15, -0.15)
+# Thanh thứ 2 trở đi trong một lượt thường hẹp hơn 120px. Lệch 0,10s là khoảng 25px, đủ để ra khỏi vùng đó.
+NARROW_ZONE = 120
+NARROW_OFFSETS = (0.0, 0.03, -0.03)
 MIN_SAMPLES_BEFORE_TAP = 5
 MAX_SAMPLES_BEFORE_TAP = 7
 ZONE_SHIFT = 12
@@ -116,12 +120,15 @@ class Runner:
         self._last_cast_tap = 0.0
         self._mult_taps = 0
         self._mult_logged = False
+        self._mult_ok = False
+        self._mult_misses = 0
         self._nav_hold = 0.0
         self._reel_tap = 0.0
         self._timesup_since: float | None = None
         self._result_tap = 0.0
 
         self._zone: tuple[int, int] | None = None
+        self._zone_seen: list[tuple[int, int]] = []
         self._cooldown_until = 0.0
         self._tapped_zone = False
         self._miss_streak = 0
@@ -165,7 +172,7 @@ class Runner:
             self._trace_file = None
         s = self.stats
         self.log(
-            f"Tổng kết: {s.casts} lượt quăng, {s.caught} thành công, {s.failed} hết giờ, "
+            f"Tổng kết: {s.casts} lượt quăng, {s.caught} thành công, {s.failed} thất bại, "
             f"{s.gold} Gold. Bảng chi tiết: {path}"
         )
         return s
@@ -312,11 +319,15 @@ class Runner:
             self._zone = None
         if self._zone is None:
             self._zone = zone
+            self._zone_seen = []
             self.tracker.reset()
             self._miss_streak = 0
         else:
-            # Mồi đè lên mép vùng vàng làm vùng trông hẹp hơn. Giữ bản rộng nhất.
+            # Mồi đè lên mép vùng vàng làm vùng trông hẹp hơn. Giữ bản rộng nhất để nhận ra còn cùng một thanh.
             self._zone = (min(self._zone[0], zone[0]), max(self._zone[1], zone[1]))
+        self._zone_seen.append(zone)
+        del self._zone_seen[:-3]
+        aim = self._aim_zone()
         self.tracker.add(when, slider.pointer)
         self._trace(f"mẫu t={when - self._t0:.2f} mồi={slider.pointer:.0f} vùng={zone[0]}-{zone[1]}")
 
@@ -336,17 +347,24 @@ class Runner:
         ready = count >= MIN_SAMPLES_BEFORE_TAP and (self.tracker.confident() or count >= MAX_SAMPLES_BEFORE_TAP)
         if not ready:
             return
-        offset = MISS_OFFSETS[self._miss_streak % len(MISS_OFFSETS)]
+        narrow = aim[1] - aim[0] < NARROW_ZONE
+        # Vùng hẹp không chịu được đường mồi còn lệch. Chờ thêm một mẫu cho khớp hơn rồi mới bấm lần đầu.
+        if narrow and self._miss_streak == 0:
+            fit_now = self.tracker.fit()
+            if count < 6 or fit_now is None or fit_now[2] > 18:
+                return
+        offsets = NARROW_OFFSETS if narrow else MISS_OFFSETS
+        offset = offsets[self._miss_streak % len(offsets)]
         # Bấm muộn hơn offset giây nghĩa là coi như cú bấm tới game sớm hơn offset giây.
         latency = self._latency - offset
-        due = self.tracker.plan(now, latency, self._zone)
+        due = self.tracker.plan(now, latency, aim)
         if due is None:
             # Vùng vàng hẹp nên trong 2.4s tới không có lúc nào mồi chắc chắn nằm trong vùng ăn thật. Chờ mẫu mới rồi tính lại.
             return
         fit = self.tracker.fit()
         self._pending_tap = {
             "total": latency,
-            "width": self._zone[1] - self._zone[0],
+            "width": int(aim[1] - aim[0]),
             "speed": fit[0] if fit else None,
             "first": self._miss_streak == 0,
         }
@@ -365,7 +383,7 @@ class Runner:
         self._cooldown_until = tapped + TAP_COOLDOWN
         self.log(
             f"Bấm thanh trượt: mồi {self.tracker.position(tapped + latency):.0f}, "
-            f"vùng {self._zone[0]}-{self._zone[1]}, tốc độ {fit[0]:.0f}px/s."
+            f"vùng {aim[0]:.0f}-{aim[1]:.0f}, tốc độ {fit[0]:.0f}px/s."
         )
 
     def _on_timesup(self, img, scene, started, ended) -> None:
@@ -373,8 +391,8 @@ class Runner:
         if self._timesup_since is None:
             self._timesup_since = now
             if self._cast_open:
-                self._record("het_gio", 0)
-                self.log("Hết giờ, cá thoát.")
+                self._record("that_bai", 0)
+                self.log("Thất bại.")
         elif now - self._timesup_since > TIMESUP_TAP_AFTER:
             self._dismiss()
         self._reset_slider()
@@ -435,7 +453,7 @@ class Runner:
         if outcome == "thanh_cong":
             s.caught += 1
             s.gold += gold
-        elif outcome == "het_gio":
+        elif outcome == "that_bai":
             s.failed += 1
         seconds = time.time() - self._cast_started
         if self._writer is not None:
@@ -468,26 +486,49 @@ class Runner:
 
     def _learned_latency(self) -> float:
         found = self.memory.latency()
-        return BASE_LATENCY if found is None else found[0]
+        if found is None:
+            return BASE_LATENCY
+        # 100 lượt vừa chạy: dưới 0,10s thì mồi ra khỏi vùng hẹp trước khi cú bấm tới, trên 0,18s thì tới quá sớm.
+        return min(0.18, max(0.10, found[0]))
+
+    def _aim_zone(self) -> tuple[float, float]:
+        """Vùng dùng để nhắm: giữa 3 lần đọc gần nhất, không phải bản ghép rộng nhất từ đầu thanh."""
+        los = sorted(zone[0] for zone in self._zone_seen)
+        his = sorted(zone[1] for zone in self._zone_seen)
+        mid = len(los) // 2
+        return float(los[mid]), float(his[mid])
 
     def _reset_slider(self, hit: bool = False) -> None:
         if hit and self._tapped_zone and self._zone is not None:
             self._on_hit()
         self._zone = None
+        self._zone_seen = []
         self._tapped_zone = False
         self._cooldown_until = 0.0
         self.tracker.reset()
 
     def _fix_multiplier(self, img) -> bool:
-        """True khi hệ số đúng (hoặc không đọc được). False khi vừa bấm đổi và cần chụp lại."""
+        """True khi được phép quăng. False khi vừa bấm đổi hệ số, hoặc cần chụp lại.
+
+        Đã thấy đúng hệ số một lần trong phiên này thì không bấm viên hệ số nữa. Một lần đọc nhầm
+        cũng đủ đẩy x1 thành x50, vì game nhảy x20 → x50.
+        """
+        if self._mult_ok:
+            return True
         current = read_multiplier(img, self.templates)
         if current is None:
+            self._mult_misses += 1
+            if self._mult_misses <= 4:
+                self._pause(0.3)
+                return False
             if not self._mult_logged:
                 self.log("Không đọc được hệ số hiện tại. Giữ nguyên.")
                 self._mult_logged = True
             return True
+        self._mult_misses = 0
         if current == self.multiplier:
             self._mult_taps = 0
+            self._mult_ok = True
             return True
         self._mult_taps += 1
         if self._mult_taps > MULT_MAX_TAPS:

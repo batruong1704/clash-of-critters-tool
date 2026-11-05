@@ -84,16 +84,18 @@ class Tracker:
         return float(_triangle(np.array([phase + speed * when]), self.span, self.lo)[0])
 
     def plan(self, now: float, latency: float, zone: tuple[float, float], horizon: float = 2.4):
-        """Giờ phát lệnh bấm (time.time) để mồi vào giữa vùng. None khi chưa có mô hình."""
+        """Giờ phát lệnh bấm (time.time) để mồi vào giữa đúng vùng này. None khi chưa có mô hình.
+
+        Mỗi thanh trong một lượt hẹp hơn thanh trước. Sai số dự đoán không nhỏ theo vùng, nên không lấy
+        một độ lệch trung bình rồi cộng vào vùng hẹp: vùng sau sẽ bị bấm sát mép. Chỉ bấm khi mồi được
+        dự đoán nằm trong 40% giữa của vùng đang thấy.
+        """
         if self.fit() is None:
             return None
         center = (zone[0] + zone[1]) / 2
-        half = max(8.0, (zone[1] - zone[0]) * 0.15)
+        width = zone[1] - zone[0]
         steps = np.arange(0.02, horizon, 0.01)
-        # Vùng ăn thật hẹp hơn vùng vàng nhìn thấy (memory.ZONE_TRUST). Mồi phải nằm trong phần này, không phải cả vùng.
-        from fishing_tool.memory import ZONE_TRUST
-
-        eat = (zone[1] - zone[0]) / 2 * ZONE_TRUST
+        eat = width / 2 * 0.40
         xs = np.array([self.position(now + step + latency) for step in steps])
         dist = np.abs(xs - center)
         inside = dist <= eat

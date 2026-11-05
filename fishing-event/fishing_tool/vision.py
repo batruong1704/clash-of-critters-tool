@@ -173,16 +173,11 @@ def read_scene(img, templates: Templates) -> Scene:
 
 
 def read_multiplier(img, templates: Templates) -> int | None:
+    """Đọc chữ số trên viên hệ số. Ảnh mẫu cả viên dễ nhận nhầm x1 với x50 vì cùng hình tròn vàng."""
     x, y = int(BADGE[0] * REF_W), int(BADGE[1] * REF_H)
-    region = (x - 50, y - 40, x + 50, y + 40)
-    best = None
-    for value in MULTIPLIERS:
-        if not templates.has(f"mult_{value}"):
-            continue
-        score, _, _ = templates.match(img, f"mult_{value}", region)
-        if score >= TEMPLATE_SPECS[f"mult_{value}"] and (best is None or score > best[0]):
-            best = (score, value)
-    return best[1] if best else None
+    box = ((x - 40) / REF_W, (y - 24) / REF_H, (x + 40) / REF_W, (y + 24) / REF_H)
+    value = _read_digits(img, box, (0.012, 0.022), "white")
+    return value if value in MULTIPLIERS else None
 
 
 def fish_tile_point(img, templates: Templates):

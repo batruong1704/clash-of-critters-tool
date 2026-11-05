@@ -7,7 +7,7 @@ Tool điều khiển game trong **LDPlayer 9** (màn dọc 720×1280) qua ADB, g
 1. Mở LDPlayer, bật **Gỡ lỗi ADB** (Cài đặt, mục Khác) như tool nhận quà.
 2. Mở game. Đang ở sân, màn Pinball hay màn Fishing Contest đều được. Tool tự đi từ sân: Pinball, ô Fishing Contest.
 3. Mở giao diện chung (`py main.py` trong thư mục `checking-mvp`), chọn tab **Tự câu cá**. Nhập **Số lượt câu** và **Hệ số** (để trống là x1) rồi bấm **Bắt đầu**.
-4. Bấm **Dừng** để dừng ngay. Tiến độ (lượt, thành công, hết giờ, Gold, rod còn) hiện ở dòng trạng thái, chi tiết ở khung nhật ký.
+4. Bấm **Dừng** để dừng ngay. Tiến độ (lượt, thành công, thất bại, Gold, rod còn) hiện ở dòng trạng thái, chi tiết ở khung nhật ký.
 
 Không bấm vào emulator khi tool đang chạy.
 
@@ -16,7 +16,7 @@ Chạy dòng lệnh (không mở cửa sổ): `py -3 tools/run_live.py <số_lư
 ## Thông số
 
 - **Số lượt câu**: tool quăng đủ N lần (mỗi lần quăng tính một lượt) rồi dừng. Hết rod thì dừng sớm.
-- **Hệ số**: x1, x2, x3, x5, x10, x20, x50, x100 (đúng vòng đổi hệ số của tài khoản này, bấm viên hệ số là sang số kế, sau x100 về x1). Để trống là x1. Tool tự bấm viên hệ số cho tới khi đúng số đã nhập. x200 có trong danh sách nhưng chưa thấy trong vòng đổi của game, và chưa có ảnh mẫu `templates/mult_200.png` nên tool từ chối chạy với x200 (không đoán mò).
+- **Hệ số**: ô chọn có x1, x2, x3, x5, x10. Để trống là x1. Vòng trong game còn x20, x50, x100 rồi quay về x1. Mỗi lần bấm viên hệ số chỉ nhảy một bậc.
 
 ## Một lượt chạy thế nào
 
@@ -26,29 +26,63 @@ Chạy dòng lệnh (không mở cửa sổ): `py -3 tools/run_live.py <số_lư
 | Chờ cá cắn | Nút **xám** | Chờ |
 | Reel it in | Nút tím và bảng tím "Now! Reel it in!" | Bấm nút tím một lần |
 | Thanh trượt | Nút tím, thanh tối có vùng vàng và mồi đỏ | Dò tốc độ mồi, bấm khi mồi vào giữa vùng vàng. Trượt thì bấm lại. Có thể 0, 1 hoặc nhiều thanh liên tiếp |
-| Time's up | Băng cam giữa màn | Ghi hết giờ, chờ game tự về |
+| Time's up | Băng cam giữa màn | Ghi thất bại, chờ game tự về |
 | Kết quả | Nút câu **tối** | Đọc Gold (hiện thoáng khi phá kỷ lục), ghi lượt thành công, rồi bấm bỏ qua |
 
 Cá nhỏ chỉ cần bấm Reel it in là lên, không có thanh trượt. Cá hiếm hơn mới có một hoặc vài thanh, vùng vàng hẹp và mồi chạy nhanh hơn.
 
 ## Kết quả
 
-- Cửa sổ có số lượt, số cá thành công, số lần hết giờ, số lần bấm thanh trượt, tổng Gold, rod còn lại.
-- `logs/cau-ca-<giờ>.csv`: mỗi lượt một dòng (`luot`, `ket_qua`, `bac`, `vang`, `so_lan_bam`, `giay`). `ket_qua` là `thanh_cong`, `het_gio` hoặc `khong_ro`.
+- Cửa sổ có số lượt, số cá thành công, số lần thất bại, số lần bấm thanh trượt, tổng Gold, rod còn lại.
+- `logs/cau-ca-<giờ>.csv`: mỗi lượt một dòng (`luot`, `ket_qua`, `vang`, `so_lan_bam`, `giay`). `ket_qua` là `thanh_cong`, `that_bai` hoặc `khong_ro`. Không còn cột bạc.
 - `logs/cau-ca-<giờ>-vet.txt`: vết thời gian từng mẫu mồi và từng cú bấm. Dùng khi cần chỉnh lại độ trễ.
 - Ảnh `logs/cau-ca-ketqua-N.png` (12 ảnh đầu mỗi lần chạy) để đối chiếu khi số Gold đọc sai.
 
-## Điểm cần biết
+## Ghi chú kỹ thuật
 
-- **Rod.** Hệ số xN tốn N rod mỗi lần quăng (đo: x2 từ 81 xuống 79). Còn ít hơn N rod thì tool dừng.
-- **Bấm bỏ qua màn kết quả.** Bấm giữa màn hay chỗ `(360, 900)` không đóng được màn "New Team Record". Bấm `(130, 1100)` (bên trái nút câu đang tối) thì đóng, và không rơi vào nút câu. Bấm `(360, 1100)` cũng đóng nhưng nếu màn đã đóng sẵn thì cú bấm đó quăng thêm một lần, nên chỉ là phương án cuối.
-- **Màn "Rewards!"** cũng là màn kết quả của cá thường (cá không cần trượt). Tool tính một lượt thành công khi thấy màn tối sau khi cần đã được quăng. Popup khác chen vào lúc cần chưa quăng thì không tính lượt.
-- **Cần quăng ngoài tool.** Nếu tool thấy cần đã quăng mà nó không bấm (bắt đầu giữa chừng), nó tính thêm một lượt và câu tiếp bình thường.
-- **Độ chính xác đã đo trên máy thật** (3 lần chạy, hơn 20 cú bấm thanh trượt): khoảng 65% trúng ngay lần đầu, phần còn lại trúng sau 1–2 lần bấm lại. Cá có 4–5 thanh liên tiếp đôi khi hết 30 giây.
-- **Gold.** Gold hiện chưa tới một giây khi phá kỷ lục, nên tool chụp thêm vài ảnh trước khi bấm bỏ qua. Số Gold từ 10 trở lên được nhận ngay cả khi chỉ kịp đọc trên một ảnh. Tool chỉ đọc chữ vàng +Gold, không lấy số trắng cạnh đồng xu bạc. Một chữ số lẻ chỉ nhận khi thấy ở hai ảnh, để bỏ tia sáng đọc nhầm. Tool không còn đọc Silver.
-- **Độ trễ khi bấm thanh trượt.** Mỗi lần chụp mất khoảng 0.45 giây, bấm qua ADB mất thêm vài phần mười giây. Tool ghi vài mẫu vị trí mồi, tính tốc độ (sóng tam giác nảy ở hai đầu thanh) rồi bấm trước một nhịp. Đo trên máy thật cần bấm muộn hơn tính toán khoảng 0.25 giây (`BASE_BIAS` trong `fishing_tool/flow.py`). Trượt thì tool thử lệch ±0.05 giây và nhớ độ lệch vừa trúng.
-- **Phẩm chất cao.** Mồi chạy nhanh và vùng vàng hẹp thì tỉ lệ trúng giảm. Trượt chỉ trừ thời gian, hết 30 giây là mất cá.
-- Tool dừng và báo lý do khi: không nhận ra màn hình quá lâu (thường là popup), bấm quăng ba lần mà không phản hồi, không đổi được hệ số, hết rod.
+Sửa code xong phải **đóng giao diện rồi mở lại**. Tiến trình đang chạy vẫn giữ bản đã nạp lúc mở.
+
+Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào viên hệ số hoặc nút câu làm lệch cả lượt.
+
+### Hệ số
+
+- Tool đọc **chữ số trắng** trên viên hệ số, không so cả hình tròn vàng. Hình tròn của x1 và x50 gần giống nhau, so cả viên sẽ nhận nhầm rồi bấm đổi.
+- Đã thấy đúng hệ số một lần trong phiên thì không bấm viên đó nữa. Một lần đọc nhầm cũng đủ đẩy hệ số đi.
+- Bấm một lần khi đang x20 thì game sang **x50**. Muốn về x1 phải đi tiếp x100 rồi mới về x1.
+- Không đọc được viên hệ số thì tool chụp lại vài lần, không bấm đại.
+
+### Thanh trượt
+
+- Trong một lượt, thanh sau hẹp hơn thanh trước. Thanh đầu thường khoảng 146px. Thanh sau còn khoảng 110px, rồi khoảng 70px. Trượt không làm vùng nhỏ lại. Vùng nhỏ lại sau mỗi lần **trúng**, khi sang thanh kế.
+- Không lấy một độ lệch trung bình rồi cộng vào mọi vùng. Vùng hẹp mà cộng độ lệch của vùng rộng sẽ bấm sát mép và trượt.
+- Điểm nhắm là **giữa vùng đang thấy** (3 lần đọc gần nhất). Bản rộng nhất ghép từ nhiều ảnh chỉ dùng để biết còn cùng một thanh, vì mồi che một mép làm vùng trông hẹp đi.
+- Chỉ bấm khi mồi được dự đoán nằm trong **40% giữa** vùng đó. Ngoài khoảng này thì chờ mẫu mới, không bấm mép.
+- Vùng dưới 120px: chờ ít nhất 6 mẫu và đường mồi phải khớp (sai số ≤ 18px) rồi mới bấm lần đầu. Trượt thì chỉ xê ±0,03 giây. Vùng rộng hơn mới thử ±0,05 đến ±0,15 giây. 0,10 giây là khoảng 25px, đủ để ra khỏi vùng hẹp.
+- Mồi chạy kiểu sóng tam giác, nảy ở khoảng x=199 và x=532 trên ảnh 720px, tốc độ thường 210–250 px/s. Mỗi ảnh chụp mất khoảng 0,45 giây nên không bấm theo ảnh vừa thấy. Bấm đi qua một shell ADB mở sẵn.
+- Trượt không mất rod, chỉ mất thời gian. Hết khoảng 30 giây thì cá thoát, ghi `that_bai`.
+
+### Độ trễ cú bấm
+
+- Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**.
+- Cú trượt không đưa vào tính độ trễ. Lúc trượt gần như mọi độ trễ đều "khớp", trung vị bị kéo về 0 và cú bấm tới sau khi mồi đã ra khỏi vùng.
+- Số đang dùng hiện ở dòng đầu nhật ký. Dữ liệu ở `data/hoc.json` (tối đa 400 cú). Xóa file đó để học lại. `tools/sim_flow.py` không ghi file này.
+- `py -3 tools/phan_tich.py` chấm lại từng cú từ `logs/*-vet.txt`. Không tin dòng TRÚNG/TRƯỢT cũ trong file vết: bản trước có lúc báo trúng khi mồi chỉ che bớt vùng vàng. Thêm `--nhap` để dựng lại `data/hoc.json` từ các file vết.
+
+### Gold
+
+- Chữ vàng `+N` nằm bên phải đầu cá, **phía trên** số trắng cạnh đồng xu bạc. Trên video demo, chữ vàng hiện khoảng giây 23,6 đến 24,2 rồi mất trước giây 24,4. Chưa tới một giây.
+- Không lấy số trắng đó, không lấy dòng cân nặng, không lấy dòng Beat …%. Dòng "New Team Record" không có nghĩa số trắng là Gold.
+- Số từ 10 trở lên nhận ngay khi đọc được một lần. Một chữ số lẻ (tia sáng đọc nhầm) chỉ nhận khi lặp ở hai ảnh.
+- Tool chụp thêm vài ảnh lúc chuyển cảnh Cool! sang màn kết quả, trước khi bấm bỏ qua. Ngủ 0,8 giây ở cảnh đó sẽ bỏ lỡ chữ vàng.
+
+### Màn kết quả và rod
+
+- Hệ số xN tốn N rod mỗi lần quăng. Còn ít hơn N rod thì dừng.
+- Bấm `(130, 1100)` để đóng màn kết quả, kể cả "New Team Record". Bấm giữa màn hoặc `(360, 900)` không đóng được. `(360, 1100)` chỉ là phương án cuối: màn đã đóng sẵn thì cú đó quăng thêm một lần.
+- Màn "Rewards!" là kết quả của cá thường, không có thanh trượt. Thấy nút câu tối sau khi cần đã quăng thì tính một lượt thành công. Popup lúc cần chưa quăng không tính lượt.
+- Tool dừng khi: không nhận ra màn hình quá lâu, bấm quăng ba lần không phản hồi, không đổi được hệ số, hết rod.
+
+Rủi ro: game có thể coi đây là thao tác tự động và khóa tài khoản. Nên thử trên tài khoản phụ.
 
 Rủi ro: game có thể coi đây là thao tác tự động và khóa tài khoản. Nên thử trên tài khoản phụ.
 
@@ -59,19 +93,11 @@ Rủi ro: game có thể coi đây là thao tác tự động và khóa tài kho
 3. `py -3 tools/sim_flow.py 400 3` chạy vòng câu trên game giả (ảnh thật của video, mồi vẽ lại). Không đụng game.
 4. Cuối cùng thử trên emulator thật, vài lượt, xem `logs/*-vet.txt`.
 
-## Tool nhớ và học qua các phiên
-
-Cú bấm đi từ lệnh ADB tới game mất khoảng 0.35 giây (đo trên 52 cú bấm thật). Sau mỗi cú bấm, tool biết kết quả (trúng nếu sang thanh mới hoặc hiện màn kết quả, trượt nếu vẫn thanh cũ) và biết đường đi của mồi nhờ các mẫu của thanh đó. Tool thử từng độ trễ L và hỏi "nếu cú bấm tới game sau L giây thì mồi có trong vùng vàng không", rồi giữ các L khớp với kết quả thật. Độ trễ dùng cho lần sau là L khớp với nhiều cú bấm nhất.
-
-Dữ liệu nằm ở `data/hoc.json` (400 cú bấm gần nhất), nên càng dùng càng chuẩn và phiên sau không học lại từ đầu. Dòng đầu nhật ký cho biết độ trễ đang dùng. Xóa `data/hoc.json` để học lại.
-
-Phân tích thủ công: `py -3 tools/phan_tich.py` tính lại tỉ lệ trúng từ các file vết, in bảng độ trễ L và độ chính xác của từng L. Thêm `--nhap` để dựng lại `data/hoc.json` từ các file vết. Chế độ mô phỏng (`tools/sim_flow.py`) không ghi vào file này.
-
 ## Thư mục
 
 | Đường dẫn | Việc |
 |---|---|
-| `checking-mvp/gift_tool/gui.py` | Giao diện chung, tab **Tự câu cá** gọi `fishing_tool.flow.Runner` |
+| `checking-mvp/gift_tool/gui.py` | Cửa sổ chung. Tab **Tự câu cá** nằm ở `presenter.py` và `view.py`, gọi `fishing_tool.flow.Runner` |
 | `fishing_tool/flow.py` | Vòng câu, đọc kết quả, dò độ lệch giờ bấm |
 | `fishing_tool/memory.py` | Bộ nhớ học giữa các phiên (`data/hoc.json`) |
 | `fishing_tool/predictor.py` | Đoán vị trí mồi, chọn giờ bấm |

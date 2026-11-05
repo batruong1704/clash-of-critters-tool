@@ -7,8 +7,9 @@ from pathlib import Path
 
 import tkinter as tk
 
-from gift_tool.paths import LOGS, RESOURCE
+from gift_tool.paths import RESOURCE
 from gift_tool.vision import Finder, draw_hits, imread, imwrite
+from rally_tool.paths import LOGS
 
 from gift_tool.gui import App
 
@@ -26,7 +27,7 @@ from rally_tool.vision import (
     topmost,
 )
 
-RALLY = Path(__file__).resolve().parent.parent.parent / "auto-join-rally" / "resource"
+RALLY = Path(__file__).resolve().parent.parent / "resource"
 
 EXPECTED = {
     "Step 1": ("map", 0),
@@ -455,18 +456,22 @@ class _RewardTape:
 
 
 def test_window() -> None:
+    settings = Path(__file__).resolve().parents[2] / "checking-mvp" / "logs" / "cua-so.json"
+    saved = settings.read_text(encoding="utf-8") if settings.exists() else None
     root = tk.Tk()
     try:
         app = App(root)
         root.update()
+        app.show_list()
+        root.update()
         if not app.list_page.winfo_ismapped() or app.rally_page.winfo_ismapped():
-            raise SystemExit("Mở lên phải đang ở nhận quà, chưa hiện rally")
+            raise SystemExit("Danh sách UID không hiện")
         app.show_rally()
         root.update()
         if app.mode != "rally" or not app.rally_page.winfo_ismapped() or app.list_page.winfo_ismapped():
             raise SystemExit("Chế độ rally không hiện")
-        if app.primary_btn.cget("text") != "Bắt đầu":
-            raise SystemExit("Nút chính của rally phải là Bắt đầu")
+        if app.primary_btn.cget("text") != "▶  Bắt đầu":
+            raise SystemExit("Nút chạy phải là Bắt đầu khi chưa chạy")
         if "nút xanh" not in app.hint_var.get():
             raise SystemExit("Thiếu hướng dẫn rally")
         called = []
@@ -480,7 +485,7 @@ def test_window() -> None:
             raise SystemExit("Quay lại danh sách UID bị kẹt ở rally")
         app.show_scan()
         root.update()
-        if app.primary_btn.cget("text") != "Quét" or not app.scan_page.winfo_ismapped():
+        if not app.scan_page.winfo_ismapped() or app.primary_btn.cget("text") != "▶  Bắt đầu":
             raise SystemExit("Chế độ quét ID bị mất")
         app.show_rally()
         app.running = True
@@ -488,7 +493,14 @@ def test_window() -> None:
         if app.mode != "rally":
             raise SystemExit("Đang chạy vẫn đổi được chế độ")
     finally:
+        if "app" in locals():
+            app.running = False
+            app.show_list()
         root.destroy()
+        if saved is None:
+            settings.unlink(missing_ok=True)
+        else:
+            settings.write_text(saved, encoding="utf-8")
     print("cửa sổ: rally nằm cùng màn nhận quà")
 
 
