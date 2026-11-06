@@ -87,7 +87,11 @@ def _test_memory(check) -> None:
     check("thanh mới gần như không chồng", _same_zone((219, 329), (326, 473)), False)
     check("thanh mới lệch tâm xa", _same_zone((383, 492), (284, 430)), False)
     check("thanh mới khi tâm nhảy 42px dù còn chồng", _same_zone((412, 521), (370, 480)), False)
+    check("mép nhảy mà mồi ở xa là thanh mới", _same_zone((297, 406), (307, 453), 213), False)
+    check("mồi che mép thì vẫn cùng thanh", _same_zone((292, 343), (292, 365), 364), True)
     check("cùng thanh vì mép phải giữ", _zone_link((411, 447), (365, 438)), "mep_phai")
+    check("chưa đo được lệch thì vẫn chờ", _hold_hit(11.2, 10.0, None, 73), True)
+    check("hết giờ chờ dù không đo được lệch", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, None, 73), False)
     check("hai mép đổi thì là thanh mới", _zone_link((412, 521), (370, 480)), "thanh_moi")
     check("nội suy mồi giữa hai mẫu", _pointer_at([(0.0, 0.0), (0.4, 100.0)], 0.1), 25.0)
 
@@ -107,8 +111,9 @@ def _test_memory(check) -> None:
     check("mồi ra khỏi vùng thì không chờ", _hold_hit(11.2, 10.0, -78, 36), False)
 
     check("gold đọc một lần", _pick_gold([1210]), 1210)
-    check("gold một chữ số không nhận", _pick_gold([9]), 0)
-    check("gold một chữ số lặp không nhận", _pick_gold([2, 2]), 0)
+    check("gold +7 vẫn nhận", _pick_gold([7]), 7)
+    check("gold +1 vẫn nhận", _pick_gold([1]), 1)
+    check("gold +2 lặp vẫn nhận", _pick_gold([2, 2]), 2)
     check("gold lấy số đủ chữ", _pick_gold([210, 1210]), 1210)
     check("gold không để số 2 đè 118", _pick_gold([118, 118, 2, 2, 2, 2]), 118)
     check("gold dừng khi số lặp", _stop_gold_samples([118, 118], 0.1, 1), True)
@@ -258,6 +263,11 @@ def main() -> int:
     check("gold video 722", read_gold(frame(722)), 548)
     check("gold video 716", read_gold(frame(716)), 548)
     check("không có gold ở video 760", read_gold(frame(760)), None)
+    one = frame(722).copy()
+    one[410:445, 520:575] = one[430, 650]
+    check("gold một chữ số có dấu cộng", read_gold(one), 5)
+    one[422:440, 400:428] = one[430, 650]
+    check("gold một chữ số mất dấu cộng thì bỏ", read_gold(one), None)
 
     _test_catch(check)
     _test_memory(check)

@@ -538,8 +538,8 @@ class Runner:
         zone = (slider.lo, slider.hi)
         self._note_after_tap(when, slider.pointer, zone)
         anchor_before = self._zone_anchor
-        link = "thanh_moi" if anchor_before is None else _zone_link(zone, anchor_before)
-        if self._zone_anchor is not None and not _same_zone(zone, self._zone_anchor):
+        link = "thanh_moi" if anchor_before is None else _zone_link(zone, anchor_before, slider.pointer)
+        if self._zone_anchor is not None and not _same_zone(zone, self._zone_anchor, slider.pointer):
             # Vùng vàng đổi: cú bấm trước đã trúng, game sang thanh mới.
             # So với mốc đầu của thanh, không so với bản đã nới rộng. Nới rộng nuốt thanh kế khi hai mép cùng trôi ~40px.
             self._on_hit()
@@ -589,7 +589,9 @@ class Runner:
             if _hold_hit(now, self._tap_at, err, half):
                 if row is not None and not row.get("cho_xac_nhan"):
                     row["cho_xac_nhan"] = True
-                    self._trace(f"chờ xác nhận, mồi lệch {err:+.0f}px còn trong vùng")
+                    # Ảnh busy xen giữa thì hai mẫu cách quá 0,7s, lệch là None. In số sẽ tắt cả lượt.
+                    lech = "chưa đo được" if err is None else f"{err:+.0f}px"
+                    self._trace(f"chờ xác nhận, mồi lệch {lech}")
                 return
             # Đã bấm mà vẫn là vùng cũ: trượt. Mồi tiếp tục chạy nên giữ mô hình, ảnh sau tính lại giờ bấm.
             self._tapped_zone = False
@@ -1179,36 +1181,63 @@ def _hold_hit(now: float, tapped: float, err: float | None, half: float) -> bool
 
     Phiên 2026-11-06 00:08: lệch -8px và -23px vẫn câu được, nhưng result hiện lúc 1,5–1,6s.
     Gọi trượt lúc 1,2s làm tool bấm thêm một cú và đẩy độ trễ sai chiều.
+    Chưa nội suy được lệch (ảnh busy xen giữa, hai mẫu cách quá 0,7s) thì cũng chờ hết khoảng này.
+    Gọi trượt ngay lúc đó biến thanh vừa trúng thành trượt.
     """
-    if err is None or half <= 0 or abs(err) > half or tapped <= 0:
+    if half <= 0 or tapped <= 0:
+        return False
+    if err is not None and abs(err) > half:
         return False
     return now < tapped + HIT_SETTLE
 
 
-def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
+def _bare_edge_jump(new: tuple[int, int], known: tuple[int, int], pointer: float | None) -> bool:
+    """Mép này đứng yên, mép kia nhảy xa, và mồi không đè lên mép kia.
+
+    Mồi che một mép thì mép đó thụt vào và tâm mồi nằm sát mép ấy. Mép nhảy mà mồi ở xa là thanh mới
+    tình cờ còn một mép gần mép cũ. Phiên 2026-11-07 00:30: 307-453 thành 297-406, mồi ở 213, bị tính cùng thanh.
+    """
+    if pointer is None:
+        return False
+    lo_delta = abs(new[0] - known[0])
+    hi_delta = abs(new[1] - known[1])
+    if lo_delta <= ZONE_SHIFT and hi_delta > 30:
+        return abs(pointer - max(new[1], known[1])) > 36
+    if hi_delta <= ZONE_SHIFT and lo_delta > 30:
+        return abs(pointer - min(new[0], known[0])) > 36
+    if max(lo_delta, hi_delta) > 30 and abs(lo_delta - hi_delta) > 20:
+        if hi_delta > lo_delta:
+            return abs(pointer - max(new[1], known[1])) > 36
+        return abs(pointer - min(new[0], known[0])) > 36
+    return False
+
+
+def _same_zone(new: tuple[int, int], known: tuple[int, int], pointer: float | None = None) -> bool:
     """Cùng một thanh trượt hay đã sang thanh mới.
 
     Mồi đè lên vùng vàng làm vùng đọc được hẹp đi từ một phía, nhưng phía còn lại giữ nguyên. Thanh mới thì
     cả hai mép đổi. Trước đây chỉ so từng mép với ngưỡng nên vùng bị che bớt (lệch hơn 25px) bị tính là thanh mới,
     mô hình mồi bị xóa liên tục và tool không bao giờ gom đủ mẫu để bấm.
     Hai mép cùng trôi khoảng 30px mà vẫn chồng nhiều thì cũng là thanh đó: ánh sáng hoặc mồi làm vùng đọc
-    dịch đi, không phải thanh mới. Thanh mới trong log nhảy tâm khoảng 80px trở lên.
+    dịch đi, không phải thanh mới.
     """
     overlap = min(new[1], known[1]) - max(new[0], known[0])
     width_new = new[1] - new[0]
     width_known = known[1] - known[0]
     smaller = max(1, min(width_new, width_known))
     edge_kept = abs(new[0] - known[0]) <= ZONE_SHIFT or abs(new[1] - known[1]) <= ZONE_SHIFT
-    if edge_kept and overlap >= 0.4 * smaller:
+    if edge_kept and overlap >= 0.4 * smaller and not _bare_edge_jump(new, known, pointer):
         return True
     center_shift = abs((new[0] + new[1]) - (known[0] + known[1])) / 2
     wider = max(width_new, width_known, 1)
-    return center_shift <= 40 and overlap >= 0.55 * smaller and smaller >= 0.7 * wider
+    if center_shift <= 32 and overlap >= 0.55 * smaller and smaller >= 0.7 * wider:
+        return not _bare_edge_jump(new, known, pointer)
+    return False
 
 
-def _zone_link(new: tuple[int, int], known: tuple[int, int]) -> str:
+def _zone_link(new: tuple[int, int], known: tuple[int, int], pointer: float | None = None) -> str:
     """Vì sao hai lần đọc vẫn là một thanh: mép nào giữ, hay chỉ tâm còn gần."""
-    if not _same_zone(new, known):
+    if not _same_zone(new, known, pointer):
         return "thanh_moi"
     lo = abs(new[0] - known[0]) <= ZONE_SHIFT
     hi = abs(new[1] - known[1]) <= ZONE_SHIFT
@@ -1254,7 +1283,8 @@ def _fmt_follow(items: list) -> str:
 def _stop_gold_samples(golds: list[int], elapsed: float, extra: int) -> bool:
     """Hết cần chụp thêm. extra là số ảnh đã chụp sau ảnh kết quả đầu.
 
-    Chữ số một mình (tia sáng, viền cá đọc thành 2) không được tính là đã thấy Gold.
+    Chữ số một mình không kết thúc sớm. +118 đôi khi bị đọc xen với số 2, nên còn chờ số dài.
+    Hết giờ mà chỉ còn +1 hoặc +7 thì _pick_gold vẫn lấy số đó.
     """
     trusted = [value for value in golds if value >= 10]
     if any(trusted.count(value) >= 2 for value in set(trusted)):
@@ -1302,11 +1332,12 @@ def _classify_frames(frames: list):
 def _pick_gold(golds: list[int]) -> int:
     """Chọn số Gold từ vài ảnh kết quả.
 
-    Số chỉ nằm trên ảnh đầu rồi biến, nên một lần đọc từ 10 trở lên vẫn nhận (1.210 đọc được một lần là thật).
-    Một chữ số lẻ không phải Gold: tia sáng hoặc viền cá trên thẻ vàng đọc thành 2, và hiệu ứng giữ nguyên nên số đó lặp ở hai ảnh.
-    Số từ 10 trở lên thắng chữ số lẻ dù chữ số lẻ xuất hiện nhiều lần hơn: lượt +118 bị đọc thành [118, 118, 2, 2, 2, 2].
+    Số chỉ nằm trên ảnh đầu rồi biến, nên một lần đọc vẫn nhận. +1 và +7 là điểm thật.
+    Số từ 10 trở lên thắng chữ số lẻ: lượt +118 bị đọc thành [118, 118, 2, 2, 2, 2].
+    Không có số dài thì lấy chữ số một mình. read_gold chỉ trả số khi thấy dấu cộng.
     """
-    long = [value for value in golds if value >= 10]
-    if not long:
+    if not golds:
         return 0
-    return max(set(long), key=lambda value: (long.count(value), value))
+    long = [value for value in golds if value >= 10]
+    pool = long or list(golds)
+    return max(set(pool), key=lambda value: (pool.count(value), value))

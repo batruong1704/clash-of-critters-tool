@@ -206,7 +206,7 @@ def _read_glyph(glyph) -> str | None:
     return best
 
 
-def _read_digits(img, box, height_range, kind: str, rightmost: bool = False) -> int | None:
+def _read_digits(img, box, height_range, kind: str, rightmost: bool = False, require_plus: bool = False) -> int | None:
     """Đọc dãy chữ số trong box (tỉ lệ). Chữ trắng hoặc vàng, có viền đen quanh nét."""
     x0, y0, x1, y1 = box
     px0, px1 = int(x0 * REF_W), int(x1 * REF_W)
@@ -253,7 +253,49 @@ def _read_digits(img, box, height_range, kind: str, rightmost: bool = False) -> 
         digits.append(digit)
     if not digits or len(digits) > 7:
         return None
-    return int("".join(digits))
+    value = int("".join(digits))
+    # Số dài đã đủ chắc. Số một chữ số (+1, +7) chỉ nhận khi có dấu + trước đồng xu.
+    # Tia sáng không có dấu cộng, nên không còn bị đọc thành điểm.
+    if require_plus and value < 10 and not _plus_before(img, (px0, py0), chain):
+        return None
+    return value
+
+
+def _plus_before(img, origin: tuple[int, int], chain: list[tuple[int, int, int, int]]) -> bool:
+    """Dấu + vàng nằm bên trái đồng xu, cùng hàng với chữ số.
+
+    Tìm ở bên trái vùng chữ số. Dấu cộng lúc phóng to cao gần bằng chữ số, nên không để nó lọt vào dãy số.
+    Trên ảnh +548: dấu cộng cách chữ số đầu khoảng 80px để chừa đồng xu.
+    """
+    ox, oy = origin
+    x, y, _w, h = chain[0]
+    digit_x = ox + x
+    mid = oy + y + h / 2
+    x0 = max(0, digit_x - 160)
+    y0 = max(0, int(mid - h))
+    y1 = min(img.shape[0], int(mid + h))
+    crop = img[y0:y1, x0:digit_x]
+    if crop.size == 0:
+        return False
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    fill = (hsv[..., 0] >= 12) & (hsv[..., 0] <= 32) & (hsv[..., 1] >= 100) & (hsv[..., 2] >= 190)
+    near = cv2.dilate((gray <= 90).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    mask = (fill & near).astype(np.uint8) * 255
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    for index in range(1, count):
+        px, py, pw, ph, area = [int(value) for value in stats[index]]
+        if area < 40 or ph < h * 0.45 or ph > h * 0.9 or pw < h * 0.4 or pw > h * 0.9:
+            continue
+        if not 0.75 <= pw / max(ph, 1) <= 1.35:
+            continue
+        gap = digit_x - (x0 + px + pw)
+        if gap < 40 or gap > 140:
+            continue
+        if abs((y0 + py + ph / 2) - mid) > h * 0.55:
+            continue
+        return True
+    return False
 
 
 def read_rods(img) -> int | None:
@@ -284,7 +326,10 @@ def read_gold(img) -> int | None:
     Vùng đọc chỉ phủ hàng chữ đó (y khoảng 0,30–0,40). Không kéo xuống hàng số trắng, dòng cân nặng hay dòng Beat …%.
     Chữ vừa hiện thì nét còn cao hơn lúc đứng yên, nên khoảng chiều cao rộng hơn số rod.
     Mưa đồng xu sau số vàng không được đọc thành số 2.
+    Số một chữ số (+1, +7) vẫn là điểm thật. Chỉ nhận khi có dấu + bên trái đồng xu,
+    nên vệt sáng đọc thành số 2 không dấu thì bỏ.
     """
     if _coin_shower(img):
         return None
-    return _read_digits(img, (0.58, 0.30, 0.88, 0.40), (0.016, 0.036), "gold")
+    # Vùng chữ số bắt đầu sau đồng xu. Dấu + nằm bên trái, _plus_before tự tìm.
+    return _read_digits(img, (0.58, 0.30, 0.88, 0.40), (0.016, 0.036), "gold", require_plus=True)
