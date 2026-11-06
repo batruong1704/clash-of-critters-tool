@@ -23,7 +23,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -1120,7 +1120,8 @@ class MainView:
     def _list_form(self, parent) -> tk.Frame:
         page = tk.Frame(parent)
         tk.Label(page, text="Mỗi dòng một UID", font=("Segoe UI", 9)).pack(anchor="w")
-        self.ids = tk.Text(page, height=UID_BOX_LINES, font=ID_FONT, relief="flat", bd=0, wrap="none")
+        # width theo số ký tự. Mặc định 80 ký tự sẽ kéo cột thao tác nuốt hết phần kết quả.
+        self.ids = tk.Text(page, height=UID_BOX_LINES, width=24, font=ID_FONT, relief="flat", bd=0, wrap="none")
         self.ids.pack(fill="x", pady=(4, 0))
         self.ids.bind("<<Modified>>", self._ids_changed)
         tk.Label(page, textvariable=self.id_summary, font=("Segoe UI", 9), anchor="w").pack(anchor="w", pady=(6, 0))

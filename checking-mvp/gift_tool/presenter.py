@@ -293,26 +293,38 @@ def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
     return "Đã tải bản mới.", _notes_between(repo, local, new)
 
 
+def _window_python() -> str:
+    """Python không gắn cửa sổ đen. python.exe luôn mở terminal trên Windows."""
+    exe = Path(sys.executable)
+    if os.name == "nt":
+        windowed = exe.with_name("pythonw.exe")
+        if windowed.is_file():
+            return str(windowed)
+    return str(exe)
+
+
 def relaunch_app() -> None:
-    """Mở lại đúng Python đang chạy để nạp code vừa kéo. Tiến trình cũ thoát sau đó."""
+    """Mở lại đúng tool đang chạy để nạp code mới. Tiến trình cũ thoát sau đó."""
     main_py = Path(sys.argv[0]).resolve()
     if main_py.name != "main.py":
         main_py = Path(__file__).resolve().parents[1] / "main.py"
-    command = [sys.executable, str(main_py)]
+    command = [_window_python(), str(main_py)]
     cwd = str(main_py.parent)
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if os.name != "nt":
-        subprocess.Popen(command, cwd=cwd, start_new_session=True, close_fds=True)
+        subprocess.Popen(command, cwd=cwd, start_new_session=True, close_fds=True, **quiet)
         return
-    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     try:
         subprocess.Popen(
             command,
             cwd=cwd,
             creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
             close_fds=True,
+            **quiet,
         )
     except OSError:
-        subprocess.Popen(command, cwd=cwd, creationflags=flags, close_fds=True)
+        subprocess.Popen(command, cwd=cwd, creationflags=flags, close_fds=True, **quiet)
 
 
 def caught_fish(message: str) -> tuple[str, str] | None:
