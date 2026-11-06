@@ -268,6 +268,11 @@ def main() -> int:
     check("gold một chữ số có dấu cộng", read_gold(one), 5)
     one[422:440, 400:428] = one[430, 650]
     check("gold một chữ số mất dấu cộng thì bỏ", read_gold(one), None)
+    wide = frame(722).copy()
+    wide[408:448, 520:640] = wide[430, 650]
+    digit = frame(722)[408:446, 498:524]
+    wide[408:446, 552:578] = digit
+    check("gold hai chữ cách xa vẫn đủ", read_gold(wide), 55)
 
     _test_catch(check)
     _test_memory(check)

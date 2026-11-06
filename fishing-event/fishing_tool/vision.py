@@ -237,10 +237,12 @@ def _read_digits(img, box, height_range, kind: str, rightmost: bool = False, req
     anchor = max(glyphs, key=lambda item: item[3])
     mid = anchor[1] + anchor[3] / 2
     row = [g for g in glyphs if abs(g[1] + g[3] / 2 - mid) <= anchor[3] * 0.25]
+    # Chữ vàng lúc vừa nảy cách nhau hơn một thân chữ. Ngưỡng cũ cắt +77 còn +7.
+    gap_ratio = 2.2 if kind == "gold" else 0.9
     chain = [row[0]]
     for item in row[1:]:
         prev = chain[-1]
-        if item[0] - (prev[0] + prev[2]) <= prev[3] * 0.9:
+        if item[0] - (prev[0] + prev[2]) <= max(prev[3], item[3]) * gap_ratio:
             chain.append(item)
         else:
             chain = [item] if rightmost else chain
@@ -249,6 +251,9 @@ def _read_digits(img, box, height_range, kind: str, rightmost: bool = False, req
         glyph = mask[y : y + h, x : x + w]
         digit = _read_glyph(glyph)
         if digit is None:
+            # Mảnh xu nằm giữa hai chữ không được xóa cả số. Rod và hệ số thì một nét lạ vẫn hủy.
+            if kind == "gold":
+                continue
             return None
         digits.append(digit)
     if not digits or len(digits) > 7:

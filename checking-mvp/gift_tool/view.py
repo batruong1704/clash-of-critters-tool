@@ -24,7 +24,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.11"
+APP_VERSION = "1.2.12"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
