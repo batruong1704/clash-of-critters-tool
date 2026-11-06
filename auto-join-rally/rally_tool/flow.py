@@ -17,6 +17,7 @@ from rally_tool.vision import (
     bottom_join,
     card_joins,
     chat_join_buttons,
+    dialog_button,
     home_goldrush,
     jump_down,
     list_joins,
@@ -115,6 +116,8 @@ class Runner:
             self._many_rallies(reading, shot)
         elif scene == "reward":
             self._close_reward(reading)
+        elif scene == "dialog":
+            self._close_dialog(shot)
         else:
             self._unknown_screen(reading, shot)
 
@@ -316,6 +319,15 @@ class Runner:
             self._pause(0.4, 0.6)
             return
         self.log("Đóng hộp hoàn thành rally.")
+        self.adb.tap(target.x, target.y)
+        self._pause(*AFTER_TAP)
+
+    def _close_dialog(self, shot) -> None:
+        target = dialog_button(shot)
+        if target is None:
+            self._pause(0.4, 0.6)
+            return
+        self.log("Bấm Confirm.")
         self.adb.tap(target.x, target.y)
         self._pause(*AFTER_TAP)
 

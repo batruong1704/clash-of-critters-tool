@@ -44,6 +44,9 @@ CONFIRM_W = (0.28, 0.62)
 CONFIRM_X = (0.40, 0.60)
 CONFIRM_Y = (0.70, 0.92)
 CONFIRM_PURPLE = 0.55
+# Hộp thoại kem, ví dụ Rally Incomplete. Nút Confirm cao hơn hộp thưởng tím.
+DIALOG_Y = (0.42, 0.78)
+DIALOG_CREAM = 0.75
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,24 @@ def list_joins(reading: Reading) -> list[Hit]:
     return [hit for hit in reading.joins if low <= hit.w <= high]
 
 
+def dialog_button(screen, joins=None) -> Hit | None:
+    """Nút Confirm trên hộp thoại nền kem. Không phải hộp thưởng tím, không phải Join trong chat."""
+    if joins is None:
+        joins = _join_bars(screen)
+    height, width = screen.shape[:2]
+    found = [
+        hit
+        for hit in joins
+        if CONFIRM_W[0] * width <= hit.w <= CONFIRM_W[1] * width
+        and CONFIRM_X[0] * width <= hit.x <= CONFIRM_X[1] * width
+        and DIALOG_Y[0] * height <= hit.y <= DIALOG_Y[1] * height
+        and _cream_card(screen, hit)
+    ]
+    if not found:
+        return None
+    return max(found, key=lambda hit: hit.y)
+
+
 def reward_button(reading: Reading) -> Hit | None:
     """Nút Confirm giữa hộp. Chưa xét nền tím; phần đó nằm trong phân loại màn."""
     found = [
@@ -240,6 +261,9 @@ def _scene(screen, finder, joins, greys, chat, back, close, goldrush) -> str:
     )
     if confirm is not None and _purple_card(screen, confirm):
         return "reward"
+    # Hộp thoại kem phủ lên màn đang đứng. Đóng trước khi xét chat, bản đồ hay nút Join.
+    if dialog_button(screen, joins) is not None:
+        return "dialog"
     # Back là icon, không phụ thuộc chữ trên nút Join hay Pending.
     if back is not None:
         return "single"
@@ -255,6 +279,19 @@ def _scene(screen, finder, joins, greys, chat, back, close, goldrush) -> str:
     if close is not None and chat is None and light < 0.20:
         return "multi"
     return "unknown"
+
+
+def _cream_card(screen, button: Hit) -> bool:
+    """Dải ngay trên nút là nền kem của hộp thoại. Chat trắng loãng hơn, không đạt ngưỡng."""
+    width = screen.shape[1]
+    y1 = int(button.y - button.h * 0.55)
+    y0 = int(button.y - button.h * 2.2)
+    x0, x1 = int(width * 0.22), int(width * 0.78)
+    if y0 < 0 or y1 - y0 < 24 or x1 <= x0:
+        return False
+    hsv = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    cream = (hsv[:, :, 1] < 50) & (hsv[:, :, 2] > 185)
+    return float(cream.mean()) >= DIALOG_CREAM
 
 
 def _purple_card(screen, button: Hit) -> bool:

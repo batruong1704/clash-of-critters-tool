@@ -17,6 +17,7 @@ from rally_tool.flow import Runner
 from rally_tool.vision import (
     card_joins,
     chat_join_buttons,
+    dialog_button,
     home_goldrush,
     jump_down,
     list_joins,
@@ -434,6 +435,63 @@ def test_reward() -> None:
         print(f"{path.stem}: đóng bằng Confirm")
 
 
+def test_dialog() -> None:
+    """Hộp Rally Incomplete bấm Confirm. Không bấm nút X đáy màn."""
+    finder = _finder()
+    path = RALLY / "Dialog. Rally Incomplete.png"
+    if not path.exists():
+        raise SystemExit("Thiếu ảnh hộp thoại Rally Incomplete")
+    shot = imread(path)
+    reading = read_screen(finder, shot)
+    button = dialog_button(shot, reading.joins)
+    if reading.scene != "dialog" or button is None:
+        raise SystemExit(f"Hộp thoại ra {reading.scene}, cần dialog")
+    if abs(button.x - reading.width / 2) > reading.width * 0.08:
+        raise SystemExit("Confirm không nằm giữa hộp thoại")
+    if not (0.50 * reading.height <= button.y <= 0.75 * reading.height):
+        raise SystemExit(f"Confirm lệch khỏi hộp thoại: {button.y}")
+    out = LOGS / "self-test-rally"
+    imwrite(out / "Dialog.png", draw_hits(shot, [button]))
+    stop = threading.Event()
+    tape = _DialogTape(stop, shot)
+    runner = Runner(tape, tape.log, stop, finder)
+    runner.quick = True
+    runner.run()
+    if len(tape.taps) != 1:
+        raise SystemExit(f"Hộp thoại phải bấm đúng một lần, ra {tape.taps}")
+    x, y = tape.taps[0]
+    if abs(x - button.x) > 20 or abs(y - button.y) > 20:
+        raise SystemExit(f"Bấm lệch Confirm {(x, y)} so với {(button.x, button.y)}")
+    if y > reading.height * 0.90:
+        raise SystemExit("Bấm quá thấp, dễ trúng nút X")
+    if any("không bấm" in line for line in tape.lines):
+        raise SystemExit("Hộp thoại vẫn bị bỏ qua")
+    print("hộp thoại: bấm Confirm")
+
+
+class _DialogTape:
+    def __init__(self, stop, shot):
+        self.stop = stop
+        self.shot = shot
+        self.taps = []
+        self.lines = []
+
+    def screenshot(self):
+        return self.shot
+
+    def tap(self, x: int, y: int) -> None:
+        self.taps.append((int(x), int(y)))
+        self.stop.set()
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 350) -> None:
+        raise SystemExit("Hộp thoại không được kéo")
+
+    def log(self, message: str) -> None:
+        self.lines.append(message)
+        if "Confirm" not in message and "Auto join" not in message and "Đã dừng" not in message:
+            raise SystemExit(f"Log lạ trên hộp thoại: {message}")
+
+
 class _RewardTape:
     def __init__(self, stop, shot):
         self.stop = stop
@@ -565,6 +623,7 @@ def main() -> None:
     test_jump_down()
     test_list_does_not_stick()
     test_reward()
+    test_dialog()
     test_window()
     print("self-test rally ok")
 
