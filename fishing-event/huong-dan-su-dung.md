@@ -110,7 +110,7 @@ Rủi ro: game có thể coi đây là thao tác tự động và khóa tài kho
 | `fishing_tool/vision.py` | Nhận màn hình, đọc thanh trượt, đọc Gold, rod, hệ số |
 | `fishing_tool/device.py` | ADB: đo giờ chụp, bấm qua shell mở sẵn |
 | `fishing_tool/self_test.py` | Kiểm tra nhận màn trên ảnh có sẵn |
-| `data/templates/` | Ảnh mẫu: nút Pinball, nút Camp, ô Fishing Contest, viên hệ số |
+| `templates/` ở thư mục gốc repo | Ảnh mẫu dùng chung: nút Pinball, nút Camp, ô Fishing Contest, viên hệ số |
 | `data/loai-ca/` | Ảnh từng loài, chia thư mục `do`, `vang`, `tim`, `xanh` |
 | `tools/` | `sim_flow.py`, `check_predictor.py`, `run_live.py` |
 | `resource/` | Ảnh và video mô tả game |

@@ -1,8 +1,10 @@
 @echo off
 setlocal
-cd /d "%~dp0checking-mvp"
-set "PY=.venv\Scripts\python.exe"
-set "PYW=.venv\Scripts\pythonw.exe"
+set "ROOT=%~dp0"
+set "VENV=%ROOT%.venv"
+cd /d "%ROOT%checking-mvp"
+set "PY=%VENV%\Scripts\python.exe"
+set "PYW=%VENV%\Scripts\pythonw.exe"
 
 call :ensure
 if errorlevel 1 exit /b 1
@@ -43,7 +45,7 @@ if not defined PYCMD (
 
 :make_venv
 echo Dang tao moi truong Python...
-"%PYCMD%" %PYARGS% -m venv .venv
+"%PYCMD%" %PYARGS% -m venv "%VENV%"
 if errorlevel 1 (
     echo Khong tao duoc .venv.
     pause
@@ -128,9 +130,9 @@ if "%ERRORLEVEL%"=="3010" exit /b 0
 exit /b 1
 
 :base_ok
-if not exist ".venv\pyvenv.cfg" exit /b 1
+if not exist "%VENV%\pyvenv.cfg" exit /b 1
 set "BASE="
-for /f "usebackq tokens=1,* delims==" %%A in (".venv\pyvenv.cfg") do (
+for /f "usebackq tokens=1,* delims==" %%A in ("%VENV%\pyvenv.cfg") do (
     set "KEY=%%A"
     set "VAL=%%B"
     call :take_home
@@ -147,10 +149,10 @@ if "%BASE:~0,1%"==" " set "BASE=%BASE:~1%"
 exit /b 0
 
 :discard
-rmdir /s /q ".venv"
-if not exist ".venv" exit /b 0
-ren ".venv" ".venv.cu.%RANDOM%"
-if exist ".venv" (
+rmdir /s /q "%VENV%"
+if not exist "%VENV%" exit /b 0
+ren "%VENV%" ".venv.cu.%RANDOM%"
+if exist "%VENV%" (
     echo Khong xoa duoc .venv cu. Dong cac cua so dang mo thu muc nay roi chay lai run.bat.
     pause
     exit /b 1

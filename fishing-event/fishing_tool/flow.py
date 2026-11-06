@@ -119,7 +119,7 @@ class Runner:
         self.templates = Templates()
         if not self.templates.has(f"mult_{multiplier}"):
             raise ValueError(
-                f"Chưa có ảnh mẫu của hệ số x{multiplier} (data/templates/mult_{multiplier}.png) nên tool không nhận ra được nó. "
+                f"Chưa có ảnh mẫu của hệ số x{multiplier} (templates/mult_{multiplier}.png) nên tool không nhận ra được nó. "
                 "Vòng đổi hệ số của game hiện có x1, x2, x3, x5, x10, x20, x50, x100."
             )
         self.adb = adb

@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPO = ROOT.parent
 DATA = ROOT / "data"
-TEMPLATES = DATA / "templates"
+TEMPLATES = REPO / "templates"
 LOGS = ROOT / "logs"
 RESOURCE = ROOT / "resource"
 VIDEO = RESOURCE / "demo-video.mp4"

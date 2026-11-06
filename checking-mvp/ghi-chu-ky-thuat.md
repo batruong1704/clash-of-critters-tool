@@ -146,7 +146,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `gift_tool/adb_client.py` | Chụp và bấm |
 | `gift_tool/paths.py` | Đường dẫn thư mục |
 | `gift_tool/self_test.py` | Kiểm tra mẫu ảnh trên ảnh có sẵn |
-| `../templates/` | Ảnh mẫu nút, dùng chung. Tool nhận quà lấy qua `TEMPLATES` trong `paths.py` |
+| `../templates/` | Mọi ảnh mẫu nút, dùng chung cho nhận quà, câu cá, nhận màn và rally |
 | `resource/` | Ảnh chụp từng bước của game, dùng để cắt mẫu và chạy `self_test` |
 | `tools/build_templates.py` | Cắt mẫu từ `resource/` |
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |

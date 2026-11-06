@@ -22,7 +22,7 @@ BUTTON = (0.5, 0.82)
 RING_RADIUS = 0.125
 BADGE = (488 / REF_W, 985 / REF_H)
 # Vòng đổi hệ số của game: x1, x2, x3, x5, x10, x20, x50, x100 rồi về x1. x200 chưa thấy trong vòng đổi của tài khoản thử,
-# chỉ dùng được khi có ảnh mẫu data/templates/mult_200.png.
+# chỉ dùng được khi có ảnh mẫu templates/mult_200.png ở thư mục gốc repo.
 MULTIPLIERS = (1, 2, 3, 5, 10, 20, 50, 100, 200)
 
 # Thanh trượt. Vùng vàng nằm trong dải hàng này, mồi đỏ cao hơn thanh một chút.

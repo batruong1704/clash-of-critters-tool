@@ -14,7 +14,7 @@ che mất các dấu hiệu nên trả UNKNOWN: hàm chỉ trả lời "đang �
 Ảnh vào là BGR (OpenCV) hoặc đường dẫn file. Ảnh ADB của LDPlayer đã là 720x1280. Ảnh có kích cỡ
 khác cùng tỉ lệ 9:16 vẫn dùng được vì ảnh được co về 720x1280 trước khi so mẫu.
 
-Ảnh mẫu trong helpers/templates/ đều ở tỉ lệ 720x1280:
+Ảnh mẫu trong templates/ ở thư mục gốc repo đều ở tỉ lệ 720x1280:
 
 | Mẫu                       | Lấy từ                                                        |
 |---------------------------|---------------------------------------------------------------|
@@ -40,7 +40,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 REF_W, REF_H = 720, 1280
 
 

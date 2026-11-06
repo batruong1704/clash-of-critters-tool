@@ -1,6 +1,6 @@
 """Nhận màn rally bằng màu và icon, không đọc chữ.
 
-Dùng chung cho mọi tool. Ảnh mẫu nút chat, back, join, mũi tên nằm cạnh tool rally.
+Dùng chung cho mọi tool. Ảnh mẫu nút chat, back, join, mũi tên nằm trong templates/ ở thư mục gốc repo.
 Mẫu kính lúp, nút X và nút Goldrush dùng chung với tool nhận quà.
 
 Join tiếng Anh và Tham gia tiếng Việt là cùng một thanh xanh. Pending, Đang chờ và
@@ -24,7 +24,7 @@ if str(_GIFT) not in sys.path:
 
 from gift_tool.vision import Finder, Hit, imread
 
-ICON_DIR = _REPO / "auto-join-rally" / "rally_tool" / "templates"
+ICON_DIR = _REPO / "templates"
 # Mẫu cắt từ ảnh cửa sổ rộng 560, cùng kiểu ảnh resource của tool nhận quà.
 ICON_SCREEN_W = 560
 CHAT_THRESHOLD = 0.78

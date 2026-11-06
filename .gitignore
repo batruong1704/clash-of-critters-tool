@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Một môi trường cho cả repo. run.bat tạo lại trên máy mới.
+.venv/
+.venv.cu.*/
