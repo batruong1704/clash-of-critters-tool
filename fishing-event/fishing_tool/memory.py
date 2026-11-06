@@ -78,6 +78,7 @@ class Memory:
         self.path = path
         self.enabled = enabled
         self.taps: list[dict] = []
+        self._late_lead = 0.0
         if enabled:
             self._load()
 
@@ -86,8 +87,10 @@ class Memory:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             taps = data.get("taps", [])
             self.taps = [t for t in taps if isinstance(t, dict) and "hit" in t]
-        except (OSError, ValueError, AttributeError):
+            self._late_lead = min(0.20, max(0.0, float(data.get("late_lead") or 0.0)))
+        except (OSError, ValueError, AttributeError, TypeError):
             self.taps = []
+            self._late_lead = 0.0
 
     def _save(self) -> None:
         if not self.enabled:
@@ -95,7 +98,13 @@ class Memory:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"version": 2, "taps": self.taps[-KEEP_TAPS:]}, ensure_ascii=False), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(
+                    {"version": 2, "late_lead": self._late_lead, "taps": self.taps[-KEEP_TAPS:]},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             os.replace(tmp, self.path)
         except OSError:
             pass  # không ghi được thì vẫn câu bình thường, chỉ mất phần nhớ
@@ -103,6 +112,16 @@ class Memory:
     @property
     def hits(self) -> list[dict]:
         return [t for t in self.taps if t["hit"]]
+
+    def late_lead(self) -> float:
+        """Giây bù thêm khi cú bấm tới muộn hơn giả định. 0 nếu máy này chưa trượt kiểu đó."""
+        return self._late_lead
+
+    def set_late_lead(self, value: float) -> None:
+        if not self.enabled:
+            return
+        self._late_lead = round(min(0.20, max(0.0, float(value))), 3)
+        self._save()
 
     def latency(self) -> tuple[float, int] | None:
         """(độ trễ tốt nhất, số cú trúng đã dùng). None khi chưa đủ cú trúng rõ ràng."""

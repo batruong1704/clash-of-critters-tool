@@ -77,6 +77,9 @@ REFINE_HORIZON = 0.70
 MIN_SAMPLES_BEFORE_TAP = 5
 MAX_SAMPLES_BEFORE_TAP = 7
 ZONE_SHIFT = 12
+# Các độ trễ đem ra so trên từng cú bấm. Log ghi mồi mô hình và mồi nội suy tại từng mốc
+# để lần sau biết cú bấm tới sớm hay muộn, khỏi phải đoán từ một số err_px.
+PROBE_LATENCIES = (0.20, 0.24, 0.28, 0.32, 0.36, 0.40, 0.44)
 
 CAST_RETRY_AFTER = 3.0
 CAST_MAX_RETRIES = 3
@@ -157,6 +160,7 @@ class Runner:
         self._result_tap = 0.0
 
         self._zone: tuple[int, int] | None = None
+        self._zone_anchor: tuple[int, int] | None = None
         self._zone_seen: list[tuple[int, int]] = []
         self._cooldown_until = 0.0
         self._tap_at = 0.0
@@ -166,12 +170,16 @@ class Runner:
         self.memory = Memory(enabled=learn)
         self._latency = self._learned_latency() if learn else BASE_LATENCY
         self._latency_nudge = 0.0
+        # Máy chậm: nút nổ khoảng 0,40s sau lệnh, trong khi giả định vùng hẹp chỉ là 0,30s.
+        # Mồi đã ra khỏi vùng 73px lúc game nhận. Bù này giữ qua các thanh, chỉ tăng khi trượt lần hai.
+        self._late_lead = self.memory.late_lead() if learn else 0.0
         self._pending_tap: dict | None = None
         self._last_offset = 0.0
         self._csv = None
         self._writer = None
         self._tap_handle = None
         self._tap_writer = None
+        self._tap_columns: list[str] = []
         self._trace_file = None
         self._t0 = time.time()
         self._last_kind = ""
@@ -203,39 +211,51 @@ class Runner:
                 self._writer.writerow(["luot", "ket_qua", "vang", "loai", "pham", "so_lan_bam", "giay"])
                 self._tap_handle = taps
                 self._tap_writer = csv.writer(taps)
-                self._tap_writer.writerow(
-                    [
-                        "luot",
-                        "ket_qua",
-                        "lan",
-                        "thanh",
-                        "lan_tren_thanh",
-                        "ket_qua_bam",
-                        "t_lenh",
-                        "tu_quang",
-                        "tre",
-                        "lech",
-                        "moi_du_doan",
-                        "vung_lo",
-                        "vung_hi",
-                        "rong",
-                        "vung_that_lo",
-                        "vung_that_hi",
-                        "toc_do",
-                        "sai_so",
-                        "so_mau",
-                        "cho",
-                        "mau_cuoi_t",
-                        "mau_cuoi_moi",
-                        "chup_dau",
-                        "chup_cuoi",
-                        "mau_sau_t",
-                        "mau_sau_moi",
-                        "mau_sau_lo",
-                        "mau_sau_hi",
-                        "err_px",
-                    ]
-                )
+                self._tap_columns = [
+                    "luot",
+                    "ket_qua",
+                    "lan",
+                    "thanh",
+                    "lan_tren_thanh",
+                    "ket_qua_bam",
+                    "t_lenh",
+                    "tu_quang",
+                    "tre",
+                    "lech",
+                    "moi_du_doan",
+                    "vung_lo",
+                    "vung_hi",
+                    "rong",
+                    "vung_that_lo",
+                    "vung_that_hi",
+                    "toc_do",
+                    "sai_so",
+                    "so_mau",
+                    "cho",
+                    "mau_cuoi_t",
+                    "mau_cuoi_moi",
+                    "chup_dau",
+                    "chup_cuoi",
+                    "mau_sau_t",
+                    "mau_sau_moi",
+                    "mau_sau_lo",
+                    "mau_sau_hi",
+                    "err_px",
+                    "hoc",
+                    "xe",
+                    "bu",
+                    "van_toc",
+                    "an",
+                    "moc_lo",
+                    "moc_hi",
+                    "noi_lo",
+                    "noi_hi",
+                    "mo_hinh",
+                    "that",
+                    "trong_moc",
+                    "mau_tiep",
+                ]
+                self._tap_writer.writerow(self._tap_columns)
                 try:
                     self._loop()
                 finally:
@@ -437,55 +457,73 @@ class Runner:
 
     def _command_latency(self, narrow: bool) -> float:
         base = self._latency + NARROW_LEAD if narrow else WIDE_LATENCY
-        return min(0.40, max(0.08, base + self._latency_nudge))
+        return min(0.55, max(0.08, base + self._latency_nudge + self._late_lead))
+
+    def _bump_late_lead(self, delta: float) -> None:
+        updated = round(min(0.20, max(0.0, self._late_lead + delta)), 3)
+        if abs(updated - self._late_lead) < 0.001:
+            return
+        self._late_lead = updated
+        self._trace(f"bù trễ tới muộn {self._late_lead:.2f}s")
+        self.memory.set_late_lead(self._late_lead)
 
     def _landing_error(self, row: dict) -> float | None:
         """Mồi lúc game nhận, trừ tâm vùng đang nhắm (px). Dương là lệch sang phải."""
-        arrival = row["t_lenh"] + row["tre"]
+        landed = _pointer_at(self._tap_points(row), row["t_lenh"] + row["tre"])
+        if landed is None:
+            return None
+        return float(landed - (row["vung_lo"] + row["vung_hi"]) / 2)
+
+    def _tap_points(self, row: dict) -> list[tuple[float, float]]:
+        """Mẫu (giây từ lúc mở log, vị trí mồi) dùng để nội suy lúc cú bấm tới."""
         pts = [(t - self._t0, x) for t, x in self.tracker.samples]
+        for item in row.get("mau_tiep") or []:
+            pts.append((float(item[0]), float(item[1])))
         if row.get("mau_sau_t") is not None:
             pts.append((float(row["mau_sau_t"]), float(row["mau_sau_moi"])))
-        pts = sorted({(round(t, 4), x) for t, x in pts})
-        if len(pts) < 2:
-            return None
-        landed = None
-        for (t0, x0), (t1, x1) in zip(pts, pts[1:]):
-            if t0 <= arrival <= t1 and 0 < t1 - t0 <= 0.70:
-                landed = x0 + (x1 - x0) * (arrival - t0) / (t1 - t0)
-                break
-        if landed is None:
-            nearest = min(pts, key=lambda item: abs(item[0] - arrival))
-            if abs(nearest[0] - arrival) > 0.60:
-                return None
-            idx = pts.index(nearest)
-            if idx + 1 < len(pts) and pts[idx + 1][0] - nearest[0] <= 0.70:
-                t0, x0 = nearest
-                t1, x1 = pts[idx + 1]
-            elif idx > 0 and nearest[0] - pts[idx - 1][0] <= 0.70:
-                t0, x0 = pts[idx - 1]
-                t1, x1 = nearest
-            else:
-                return None
-            if t1 == t0:
-                return None
-            landed = nearest[1] + (x1 - x0) / (t1 - t0) * (arrival - nearest[0])
-        return float(landed - (row["vung_lo"] + row["vung_hi"]) / 2)
+        return sorted({(round(t, 4), x) for t, x in pts})
+
+    def _remember_probe(self, row: dict) -> None:
+        """Ghi mồi nội suy tại từng độ trễ, và mốc vùng có chứa mồi đó không."""
+        pts = self._tap_points(row)
+        lo, hi = float(row["moc_lo"]), float(row["moc_hi"])
+        found = []
+        inside = []
+        for latency in PROBE_LATENCIES:
+            pos = _pointer_at(pts, row["t_lenh"] + latency)
+            if pos is None:
+                found.append(f"{latency:.2f}:")
+                inside.append(f"{latency:.2f}:")
+                continue
+            found.append(f"{latency:.2f}:{pos:.0f}")
+            inside.append(f"{latency:.2f}:{'trong' if lo <= pos <= hi else 'ngoai'}")
+        row["that"] = " ".join(found)
+        row["trong_moc"] = " ".join(inside)
 
     def _nudge_from_miss(self, row: dict) -> None:
         """Lệch cùng chiều vận tốc là lệnh tới muộn. Lần mồi quay lại phát lệnh sớm hơn đúng chừng đó.
 
         Lệch lớn hơn nửa vùng là mô hình sai pha, không phải độ trễ cú bấm. Xê trễ theo số đó
         đẩy cú sau ra khỏi vùng hẹp: lượt 5, vùng 36px lệch +29px rồi xê +0,08s, cú kế tới khi mồi còn ngoài vùng.
+
+        Lệch gần 0 mà vẫn trượt là cú bấm tới sau lúc giả định: lúc đo mồi còn trong vùng, lúc game nhận thì đã ra.
+        Lần trượt đầu có thể là nhiễu. Lần thứ hai trên cùng một thanh thì bù thêm, và giữ sang thanh sau.
         """
         err = row.get("err_px")
         if err is None:
             return
+        half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
+        inside = half > 0 and abs(err) <= max(12.0, 0.45 * half)
+        if inside and self._miss_streak >= 1:
+            self._bump_late_lead(0.10)
+            self._trace("trượt lần nữa dù mồi còn trong vùng lúc giả định, bù vì cú bấm tới muộn")
         vel = self.tracker.velocity(self._t0 + row["t_lenh"] + row["tre"])
         if vel is None or abs(vel) < 80:
             return
-        half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
         if half > 0 and abs(err) > half:
             self._latency_nudge = 0.0
+            if err / vel < -0.04:
+                self._bump_late_lead(-0.05)
             self._trace("giữ trễ, mồi lệch quá nửa vùng nên không phải độ trễ")
             return
         cap = 0.08
@@ -499,20 +537,27 @@ class Runner:
         when = started + CAPTURE_FRACTION * (ended - started)
         zone = (slider.lo, slider.hi)
         self._note_after_tap(when, slider.pointer, zone)
-        if self._zone is not None and not _same_zone(zone, self._zone):
+        anchor_before = self._zone_anchor
+        link = "thanh_moi" if anchor_before is None else _zone_link(zone, anchor_before)
+        if self._zone_anchor is not None and not _same_zone(zone, self._zone_anchor):
             # Vùng vàng đổi: cú bấm trước đã trúng, game sang thanh mới.
+            # So với mốc đầu của thanh, không so với bản đã nới rộng. Nới rộng nuốt thanh kế khi hai mép cùng trôi ~40px.
             self._on_hit()
             self._zone = None
+            self._zone_anchor = None
         if self._zone is None:
             self._slider_bar += 1
             self._zone = zone
+            self._zone_anchor = zone
             self._zone_seen = []
             self._carry_motion()
             self._miss_streak = 0
             self._latency_nudge = 0.0
         else:
-            # Mồi đè lên mép vùng vàng làm vùng trông hẹp hơn. Giữ bản rộng nhất để nhận ra còn cùng một thanh.
+            # Mồi đè lên mép vùng vàng làm vùng trông hẹp hơn. Giữ bản rộng nhất để nhắm, mốc nhận thanh thì giữ nguyên.
             self._zone = (min(self._zone[0], zone[0]), max(self._zone[1], zone[1]))
+            if self._zone_anchor is not None and zone[1] - zone[0] > self._zone_anchor[1] - self._zone_anchor[0] + 4:
+                self._zone_anchor = zone
         self._zone_seen.append(zone)
         del self._zone_seen[:-3]
         aim = self._aim_zone()
@@ -523,8 +568,14 @@ class Runner:
             "chup_dau": started - self._t0,
             "chup_cuoi": ended - self._t0,
         }
+        moc = "—" if anchor_before is None else f"{anchor_before[0]}-{anchor_before[1]}"
+        lech_moc = ""
+        if anchor_before is not None:
+            lech_moc = f" lệch_trái={zone[0] - anchor_before[0]:+d} lệch_phải={zone[1] - anchor_before[1]:+d}"
+        noi = self._zone or zone
         self._trace(
             f"mẫu t={when - self._t0:.2f} mồi={slider.pointer:.0f} vùng={zone[0]}-{zone[1]} "
+            f"mốc={moc} cùng={link}{lech_moc} nới={noi[0]}-{noi[1]} "
             f"chụp {started - self._t0:.2f}-{ended - self._t0:.2f}"
         )
 
@@ -602,10 +653,42 @@ class Runner:
         self.adb.tap_fast(*BUTTON_XY)
         tapped = time.time()
         self._pending_tap["time"] = tapped
-        self._cast_tap_log.append(self._tap_row(tapped, latency, offset, aim, fit))
+        row = self._tap_row(tapped, latency, offset, aim, fit)
+        visual = (aim[1] - aim[0]) / 2 * 0.40
+        eat = visual if measured is None else min(visual, measured)
+        vel = self.tracker.velocity(tapped + latency)
+        anchor = self._zone_anchor or (int(aim[0]), int(aim[1]))
+        grown = self._zone or anchor
+        ladder = []
+        for probe in PROBE_LATENCIES:
+            pos = self.tracker.position(tapped + probe)
+            ladder.append(f"{probe:.2f}:" if pos is None else f"{probe:.2f}:{pos:.0f}")
+        row.update(
+            {
+                "hoc": self._latency,
+                "xe": self._latency_nudge,
+                "bu": self._late_lead,
+                "van_toc": vel,
+                "an": eat,
+                "moc_lo": anchor[0],
+                "moc_hi": anchor[1],
+                "noi_lo": grown[0],
+                "noi_hi": grown[1],
+                "mo_hinh": " ".join(ladder),
+                "that": "",
+                "trong_moc": "",
+                "mau_tiep": [],
+            }
+        )
+        self._cast_tap_log.append(row)
         self._trace(
             f"BẤM lệnh t={tapped - self._t0:.2f} dự kiến tới game {tapped - self._t0 + latency:.2f} "
-            f"mồi dự đoán={self.tracker.position(tapped + latency):.0f} độ lệch={offset:+.2f} bias={self._bias:+.2f} trễ={latency:.2f}"
+            f"mồi dự đoán={self.tracker.position(tapped + latency):.0f} độ lệch={offset:+.2f} bias={self._bias:+.2f} "
+            f"trễ={latency:.2f} học={self._latency:.2f} xê={self._latency_nudge:+.2f} bù={self._late_lead:.2f}"
+        )
+        self._trace(
+            f"  mốc={anchor[0]}-{anchor[1]} nới={grown[0]}-{grown[1]} ăn=±{eat:.0f} "
+            f"vận_tốc={_num(vel, '+.0f')} mô hình {row['mo_hinh']}"
         )
         self.stats.taps += 1
         self._cast_taps += 1
@@ -747,6 +830,11 @@ class Runner:
                 break
         ok = consistent_latencies(self.tracker, tap["time"], self._zone, hit) if self._zone is not None else None
         self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok, err)
+        if hit and err is not None and self._late_lead > 0:
+            vel = self.tracker.velocity(tap["time"] + float(tap["total"]))
+            if vel is not None and abs(vel) >= 80 and err / vel < -0.06:
+                self._bump_late_lead(-0.05)
+                self._trace("trúng sớm, giảm bù trễ")
         if self.memory.enabled:
             self._latency = self._learned_latency()
 
@@ -770,18 +858,24 @@ class Runner:
         self._cast_tap_flushed = False
 
     def _note_after_tap(self, when: float, pointer: float, zone: tuple[int, int]) -> None:
-        """Mẫu đầu tiên sau lệnh bấm. Dùng để biết mồi thật đang ở đâu lúc ảnh kế tiếp."""
+        """Giữ tối đa 4 ảnh sau lệnh bấm, đến khi cú đó được chốt trúng hoặc trượt."""
         if not self._cast_tap_log:
             return
         row = self._cast_tap_log[-1]
-        if row["mau_sau_t"] is not None:
+        if row["ket_qua_bam"] is not None:
             return
-        if when - self._t0 <= row["t_lenh"] + 0.02:
+        rel = when - self._t0
+        if rel <= row["t_lenh"] + 0.02:
             return
-        row["mau_sau_t"] = when - self._t0
-        row["mau_sau_moi"] = float(pointer)
-        row["mau_sau_lo"] = zone[0]
-        row["mau_sau_hi"] = zone[1]
+        follow = row.setdefault("mau_tiep", [])
+        if len(follow) >= 4:
+            return
+        follow.append((rel, float(pointer), zone[0], zone[1]))
+        if row["mau_sau_t"] is None:
+            row["mau_sau_t"] = rel
+            row["mau_sau_moi"] = float(pointer)
+            row["mau_sau_lo"] = zone[0]
+            row["mau_sau_hi"] = zone[1]
 
     def _tap_row(self, tapped: float, latency: float, offset: float, aim: tuple[float, float], fit) -> dict:
         obs = self._last_obs or {}
@@ -816,6 +910,19 @@ class Runner:
             "mau_sau_lo": None,
             "mau_sau_hi": None,
             "err_px": None,
+            "hoc": None,
+            "xe": None,
+            "bu": None,
+            "van_toc": None,
+            "an": None,
+            "moc_lo": aim[0],
+            "moc_hi": aim[1],
+            "noi_lo": widest[0],
+            "noi_hi": widest[1],
+            "mo_hinh": "",
+            "that": "",
+            "trong_moc": "",
+            "mau_tiep": [],
         }
 
     def _mark_open_tap(self, hit: bool) -> None:
@@ -823,10 +930,14 @@ class Runner:
             if row["ket_qua_bam"] is None:
                 row["ket_qua_bam"] = "trung" if hit else "truot"
                 row["err_px"] = self._landing_error(row)
+                self._remember_probe(row)
                 if not hit:
                     self._nudge_from_miss(row)
                 err = "không đo được" if row["err_px"] is None else f"{row['err_px']:+.0f}px"
                 self._trace(f"err_px={err}")
+                self._trace(f"  thật {row['that']}")
+                self._trace(f"  trong mốc {row['trong_moc']}")
+                self._trace(f"  mẫu tiếp {_fmt_follow(row.get('mau_tiep') or [])}")
                 return
 
     def _flush_cast_taps(self, outcome: str) -> None:
@@ -861,8 +972,13 @@ class Runner:
                 f" ảnh cuối t={_num(row['mau_cuoi_t'], '.2f')} mồi={_num(row['mau_cuoi_moi'], '.0f')}"
                 f" chụp {_num(row['chup_dau'], '.2f')}-{_num(row['chup_cuoi'], '.2f')}"
                 f" err_px={_num(row.get('err_px'), '+.0f')}"
+                f" học={_num(row.get('hoc'), '.2f')} xê={_num(row.get('xe'), '+.2f')} bù={_num(row.get('bu'), '.2f')}"
+                f" mốc={_num(row.get('moc_lo'), '.0f')}-{_num(row.get('moc_hi'), '.0f')}"
                 f"{sau} {str(row['ket_qua_bam']).upper()}"
             )
+            self._trace(f"    mô hình {row.get('mo_hinh') or ''}")
+            self._trace(f"    thật {row.get('that') or ''} | {row.get('trong_moc') or ''}")
+            self._trace(f"    mẫu tiếp {_fmt_follow(row.get('mau_tiep') or [])}")
             self._write_tap_csv(outcome, row)
         if self._tap_handle is not None:
             self._tap_handle.flush()
@@ -872,8 +988,13 @@ class Runner:
         if self._tap_writer is None:
             return
         if row is None:
-            self._tap_writer.writerow([self.stats.casts, outcome, 0, "", "", "", *([""] * 23)])
+            blank = [""] * len(self._tap_columns)
+            blank[0] = self.stats.casts
+            blank[1] = outcome
+            blank[2] = 0
+            self._tap_writer.writerow(blank)
             return
+        follow = _fmt_follow(row.get("mau_tiep") or [])
         self._tap_writer.writerow(
             [
                 self.stats.casts,
@@ -905,6 +1026,19 @@ class Runner:
                 row["mau_sau_lo"] if row["mau_sau_lo"] is not None else "",
                 row["mau_sau_hi"] if row["mau_sau_hi"] is not None else "",
                 _num(row.get("err_px"), "+.1f"),
+                _num(row.get("hoc"), ".3f"),
+                _num(row.get("xe"), "+.3f"),
+                _num(row.get("bu"), ".3f"),
+                _num(row.get("van_toc"), "+.0f"),
+                _num(row.get("an"), ".1f"),
+                _num(row.get("moc_lo"), ".0f"),
+                _num(row.get("moc_hi"), ".0f"),
+                _num(row.get("noi_lo"), ".0f"),
+                _num(row.get("noi_hi"), ".0f"),
+                row.get("mo_hinh") or "",
+                row.get("that") or "",
+                row.get("trong_moc") or "",
+                follow,
             ]
         )
 
@@ -929,6 +1063,7 @@ class Runner:
         if hit and self._tapped_zone and self._zone is not None:
             self._on_hit()
         self._zone = None
+        self._zone_anchor = None
         self._zone_seen = []
         self._tapped_zone = False
         self._cooldown_until = 0.0
@@ -1069,6 +1204,51 @@ def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
     center_shift = abs((new[0] + new[1]) - (known[0] + known[1])) / 2
     wider = max(width_new, width_known, 1)
     return center_shift <= 40 and overlap >= 0.55 * smaller and smaller >= 0.7 * wider
+
+
+def _zone_link(new: tuple[int, int], known: tuple[int, int]) -> str:
+    """Vì sao hai lần đọc vẫn là một thanh: mép nào giữ, hay chỉ tâm còn gần."""
+    if not _same_zone(new, known):
+        return "thanh_moi"
+    lo = abs(new[0] - known[0]) <= ZONE_SHIFT
+    hi = abs(new[1] - known[1]) <= ZONE_SHIFT
+    if lo and hi:
+        return "ca_hai_mep"
+    if lo:
+        return "mep_trai"
+    if hi:
+        return "mep_phai"
+    return "tam"
+
+
+def _pointer_at(pts: list[tuple[float, float]], arrival: float) -> float | None:
+    """Nội suy vị trí mồi tại một thời điểm. None khi không có hai mẫu kề đủ gần."""
+    if len(pts) < 2:
+        return None
+    for (t0, x0), (t1, x1) in zip(pts, pts[1:]):
+        if t0 <= arrival <= t1 and 0 < t1 - t0 <= 0.70:
+            return float(x0 + (x1 - x0) * (arrival - t0) / (t1 - t0))
+    nearest = min(pts, key=lambda item: abs(item[0] - arrival))
+    if abs(nearest[0] - arrival) > 0.60:
+        return None
+    idx = pts.index(nearest)
+    if idx + 1 < len(pts) and pts[idx + 1][0] - nearest[0] <= 0.70:
+        t0, x0 = nearest
+        t1, x1 = pts[idx + 1]
+    elif idx > 0 and nearest[0] - pts[idx - 1][0] <= 0.70:
+        t0, x0 = pts[idx - 1]
+        t1, x1 = nearest
+    else:
+        return None
+    if t1 == t0:
+        return None
+    return float(nearest[1] + (x1 - x0) / (t1 - t0) * (arrival - nearest[0]))
+
+
+def _fmt_follow(items: list) -> str:
+    if not items:
+        return "—"
+    return " ".join(f"{t:.2f}:{m:.0f}:{lo}-{hi}" for t, m, lo, hi in items)
 
 
 def _stop_gold_samples(golds: list[int], elapsed: float, extra: int) -> bool:

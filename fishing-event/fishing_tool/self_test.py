@@ -70,12 +70,38 @@ def _test_memory(check) -> None:
     miss = consistent_latencies(tracker, 1.0, (400, 480), False)
     check("nhớ: L khớp khi trượt không chứa L trúng", miss is not None and not set(miss) & set(good or []), True)
 
-    from fishing_tool.flow import GOLD_LOOK, HIT_SETTLE, RESULT_SAMPLES, _hold_hit, _pick_gold, _same_zone, _stop_gold_samples
+    from fishing_tool.flow import (
+        GOLD_LOOK,
+        HIT_SETTLE,
+        RESULT_SAMPLES,
+        _hold_hit,
+        _pick_gold,
+        _pointer_at,
+        _same_zone,
+        _stop_gold_samples,
+        _zone_link,
+    )
 
     check("cùng thanh khi mép giữ nguyên", _same_zone((237, 282), (236, 382)), True)
     check("cùng thanh khi cả hai mép trôi 27px", _same_zone((290, 373), (317, 400)), True)
     check("thanh mới gần như không chồng", _same_zone((219, 329), (326, 473)), False)
     check("thanh mới lệch tâm xa", _same_zone((383, 492), (284, 430)), False)
+    check("thanh mới khi tâm nhảy 42px dù còn chồng", _same_zone((412, 521), (370, 480)), False)
+    check("cùng thanh vì mép phải giữ", _zone_link((411, 447), (365, 438)), "mep_phai")
+    check("hai mép đổi thì là thanh mới", _zone_link((412, 521), (370, 480)), "thanh_moi")
+    check("nội suy mồi giữa hai mẫu", _pointer_at([(0.0, 0.0), (0.4, 100.0)], 0.1), 25.0)
+
+    import threading
+
+    from fishing_tool.flow import Runner
+
+    lead = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
+    slipped = {"err_px": -1.4, "t_lenh": 1.0, "tre": 0.30, "vung_lo": 253, "vung_hi": 326}
+    lead._nudge_from_miss(slipped)
+    check("trượt sát tâm lần đầu chưa bù trễ", lead._late_lead, 0.0)
+    lead._miss_streak = 1
+    lead._nudge_from_miss(slipped)
+    check("trượt sát tâm lần hai thì bù trễ", lead._late_lead, 0.1)
     check("chờ xác nhận khi mồi còn trong vùng", _hold_hit(11.2, 10.0, -8, 73), True)
     check("hết giờ chờ thì được gọi trượt", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, -8, 73), False)
     check("mồi ra khỏi vùng thì không chờ", _hold_hit(11.2, 10.0, -78, 36), False)
