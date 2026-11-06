@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fishing_tool.catch import classify
 from fishing_tool.device import FishAdb
 from fishing_tool.memory import Memory, consistent_latencies
 from fishing_tool.paths import LOGS
@@ -87,6 +88,9 @@ TIMESUP_TAP_AFTER = 6.0
 # Sau khi ghi xong lượt, còn chờ màn Time's up tự tắt (6 giây) rồi bấm đóng. Quá hạn này thì dừng dù màn chưa đổi.
 STOP_SETTLE = 12.0
 RESULT_SAMPLES = 4
+# Chữ vàng chỉ hiện khi phá kỷ lục và biến trong chưa tới một giây. Không thấy chữ thì thôi chụp thêm.
+GOLD_LOOK = 0.8
+CALCULATING = "Đang tính toán kết quả."
 
 
 class Stopped(Exception):
@@ -115,7 +119,7 @@ class Runner:
         self.templates = Templates()
         if not self.templates.has(f"mult_{multiplier}"):
             raise ValueError(
-                f"Chưa có ảnh mẫu của hệ số x{multiplier} (templates/mult_{multiplier}.png) nên tool không nhận ra được nó. "
+                f"Chưa có ảnh mẫu của hệ số x{multiplier} (data/templates/mult_{multiplier}.png) nên tool không nhận ra được nó. "
                 "Vòng đổi hệ số của game hiện có x1, x2, x3, x5, x10, x20, x50, x100."
             )
         self.adb = adb
@@ -194,7 +198,7 @@ class Runner:
                 self._trace_file = trace
                 self._t0 = time.time()
                 self._writer = csv.writer(handle)
-                self._writer.writerow(["luot", "ket_qua", "vang", "so_lan_bam", "giay"])
+                self._writer.writerow(["luot", "ket_qua", "vang", "loai", "pham", "so_lan_bam", "giay"])
                 self._tap_handle = taps
                 self._tap_writer = csv.writer(taps)
                 self._tap_writer.writerow(
@@ -624,16 +628,25 @@ class Runner:
 
     def _on_result(self, img, scene, started, ended) -> None:
         self._reset_slider(hit=True)
-        if self._cast_open:
-            if self._fished:
-                golds = self._read_result(img)
-                gold = _pick_gold(golds)
+        if self._cast_open and self._fished:
+            golds, frames = self._sample_result(img, ended)
+            gold = _pick_gold(golds)
+            # Đóng màn trước. So loài chạy trên ảnh đã giữ, không giữ người chờ cú bấm.
+            self._dismiss()
+            self.log(CALCULATING)
+            catch = _classify_frames(frames)
+            self._trace(f"loài={catch.label if catch else ''}")
+            if catch is None:
                 self.log("Câu được cá" + (f", +{gold} Gold." if gold else "."))
-                self._record("thanh_cong", gold)
             else:
-                # Màn kết quả hiện ra khi cần chưa hề được quăng: popup khác chen vào, không tính lượt.
-                self.log("Có popup chen vào, chưa tính lượt.")
-        self._dismiss()
+                self.log(f"Câu được {catch.label}" + (f", +{gold} Gold." if gold else "."))
+            self._record("thanh_cong", gold, catch)
+        elif self._cast_open:
+            # Màn kết quả hiện ra khi cần chưa hề được quăng: popup khác chen vào, không tính lượt.
+            self.log("Có popup chen vào, chưa tính lượt.")
+            self._dismiss()
+        else:
+            self._dismiss()
         self._pause(0.5)
 
     def _on_unknown(self, img, scene, started, ended) -> None:
@@ -648,31 +661,45 @@ class Runner:
         if value:
             self._seen_gold.append(value)
 
-    def _read_result(self, first) -> list[int]:
-        """Gold chỉ hiện thoáng khi phá kỷ lục, nên chụp thêm vài ảnh trước khi bấm bỏ qua."""
-        golds = list(self._seen_gold)
-        frame = first
-        for index in range(RESULT_SAMPLES + 1):
-            gold = read_gold(frame)
-            if gold:
-                golds.append(gold)
-            if index == 0 and self._result_saved < 12:
-                # Giữ ảnh kết quả đầu tiên để đối chiếu khi số Gold đọc sai.
-                from gift_tool.vision import imwrite
+    def _sample_result(self, first, opened_at: float) -> tuple[list[int], list]:
+        """Chụp thêm để đọc Gold, rồi trả ảnh để so loài sau khi đã bấm đóng màn.
 
-                self._result_saved += 1
-                imwrite(LOGS / f"cau-ca-ketqua-{self._result_saved}.png", frame)
-            if index == RESULT_SAMPLES:
+        Dừng khi cùng một số xuất hiện hai lần. Không thấy chữ vàng thì dừng sau GOLD_LOOK giây
+        kể từ ảnh kết quả đầu. Loài so trên ảnh đầu, lúc cá còn rõ.
+        """
+        golds = list(self._seen_gold)
+        frames = [first]
+        frame = first
+        extra = 0
+        # Ảnh đầu vừa được ghi Gold ở _note_gold. Đọc lại cùng ảnh sẽ đếm một số thành hai lần.
+        pending = False
+        if self._result_saved < 12:
+            from gift_tool.vision import imwrite
+
+            self._result_saved += 1
+            imwrite(LOGS / f"cau-ca-ketqua-{self._result_saved}.png", first)
+        while True:
+            if pending:
+                gold = read_gold(frame)
+                if gold:
+                    golds.append(gold)
+            pending = True
+            if _stop_gold_samples(golds, time.time() - opened_at, extra):
                 break
             self._check()
             frame = normalize(self.adb.screenshot())
+            extra += 1
             if read_scene(frame, self.templates).kind != "result":
+                gold = read_gold(frame)
+                if gold:
+                    golds.append(gold)
                 break
-        self._trace(f"đọc kết quả: gold={golds}")
+            frames.append(frame)
+        self._trace(f"đọc gold={golds} ảnh={len(frames)}")
         self._seen_gold.clear()
-        return golds
+        return golds, frames
 
-    def _record(self, outcome: str, gold: int) -> None:
+    def _record(self, outcome: str, gold: int, catch=None) -> None:
         s = self.stats
         if outcome == "thanh_cong":
             s.caught += 1
@@ -680,8 +707,10 @@ class Runner:
         elif outcome == "that_bai":
             s.failed += 1
         seconds = time.time() - self._cast_started
+        label = catch.label if catch is not None else ""
+        rarity = catch.rarity if catch is not None else ""
         if self._writer is not None:
-            self._writer.writerow([s.casts, outcome, gold, self._cast_taps, f"{seconds:.1f}"])
+            self._writer.writerow([s.casts, outcome, gold, label, rarity, self._cast_taps, f"{seconds:.1f}"])
         self._flush_cast_taps(outcome)
         self._cast_open = False
         self.on_stats(s)
@@ -1029,6 +1058,25 @@ def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
     center_shift = abs((new[0] + new[1]) - (known[0] + known[1])) / 2
     wider = max(width_new, width_known, 1)
     return center_shift <= 40 and overlap >= 0.55 * smaller and smaller >= 0.7 * wider
+
+
+def _stop_gold_samples(golds: list[int], elapsed: float, extra: int) -> bool:
+    """Hết cần chụp thêm. extra là số ảnh đã chụp sau ảnh kết quả đầu."""
+    if any(golds.count(value) >= 2 for value in set(golds)):
+        return True
+    if not golds and elapsed >= GOLD_LOOK:
+        return True
+    return extra >= RESULT_SAMPLES
+
+
+def _classify_frames(frames: list):
+    """Loài trên ảnh kết quả đã giữ. Ảnh sau chỉ dùng khi ảnh đầu không khớp."""
+    if not frames:
+        return None
+    catch = classify(frames[0])
+    if catch is None and len(frames) > 1:
+        catch = classify(frames[-1])
+    return catch
 
 
 def _pick_gold(golds: list[int]) -> int:

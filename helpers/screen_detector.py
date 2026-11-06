@@ -147,3 +147,72 @@ def _match(gray, template, region: tuple[int, int, int, int]) -> float:
         return 0.0
     result = cv2.matchTemplate(view, template, cv2.TM_CCOEFF_NORMED)
     return float(cv2.minMaxLoc(result)[1])
+
+
+# Nút mode Goldrush cắt từ ảnh rộng 560. Khi không được chọn, điểm khớp chỉ khoảng 0.48.
+_MODE_ICON = Path(__file__).resolve().parent.parent / "templates" / "goldrush.png"
+_MODE_SCREEN_W = 560
+_MODE_SCORE = 0.45
+
+
+def goldrush_entry(image) -> tuple[int, int] | None:
+    """Điểm bấm để vào Goldrush khi đang ở sân hoặc pinball.
+
+    Đã ở bản đồ Goldrush, đang câu cá, hoặc không nhận ra màn thì trả None.
+    Icon nút đổi theo bản game. Khớp được thì bấm đúng icon. Không khớp thì bấm
+    nút giữa thanh mode, chỗ Goldrush nằm giữa Battle và Pinball.
+    """
+    img = _bgr(image)
+    if detect_screen(img) not in (Screen.LOBBY, Screen.PINBALL):
+        return None
+    found = _goldrush_tab(img)
+    if found is not None:
+        return found
+    height, width = img.shape[:2]
+    return int(round(width * 0.50)), int(round(height * 0.93))
+
+
+def _bgr(image) -> np.ndarray:
+    if isinstance(image, (str, Path)):
+        image = imread(image)
+    if not isinstance(image, np.ndarray) or image.ndim < 2:
+        raise ValueError("Cần ảnh BGR của OpenCV hoặc đường dẫn file ảnh.")
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    return image
+
+
+@lru_cache(maxsize=1)
+def _goldrush_icon() -> np.ndarray:
+    return imread(_MODE_ICON)
+
+
+def _goldrush_tab(img) -> tuple[int, int] | None:
+    """Tâm icon Goldrush ở nửa dưới, giữa thanh mode. Bỏ nút Pinball sát mép phải."""
+    height, width = img.shape[:2]
+    templ = _goldrush_icon()
+    y0, x0 = int(height * 0.78), int(width * 0.22)
+    view = img[y0:, x0 : int(width * 0.78)]
+    if view.size == 0:
+        return None
+    base = width / _MODE_SCREEN_W
+    best = 0.0
+    point = None
+    for scale in (0.86, 0.95, 1.0, 1.05, 1.14):
+        tw = int(templ.shape[1] * base * scale)
+        th = int(templ.shape[0] * base * scale)
+        if tw < 8 or th < 8 or tw >= view.shape[1] or th >= view.shape[0]:
+            continue
+        shrinking = tw <= templ.shape[1] and th <= templ.shape[0]
+        sized = cv2.resize(templ, (tw, th), interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR)
+        result = cv2.matchTemplate(view, sized, cv2.TM_CCOEFF_NORMED)
+        score, _, _, loc = cv2.minMaxLoc(result)
+        if score <= best:
+            continue
+        best = float(score)
+        point = (x0 + int(round(loc[0] + tw / 2)), y0 + int(round(loc[1] + th / 2)))
+    if point is None or best < _MODE_SCORE:
+        return None
+    return point

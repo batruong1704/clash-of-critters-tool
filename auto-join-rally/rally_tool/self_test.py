@@ -18,6 +18,7 @@ from rally_tool.vision import (
     card_joins,
     chat_join_buttons,
     dialog_button,
+    faint_confirm,
     home_goldrush,
     jump_down,
     list_joins,
@@ -165,6 +166,34 @@ def test_returns_home() -> None:
     print("ra khỏi mode: bấm lại Goldrush")
 
 
+def test_helper_leads_into_goldrush() -> None:
+    """Sân và pinball bản mới không còn icon cũ. Helper vẫn dắt vào nút Goldrush giữa thanh mode."""
+    from helpers.screen_detector import goldrush_entry
+
+    fishing = Path(__file__).resolve().parents[2] / "fishing-event" / "resource"
+    lobby = imread(next(fishing.glob("1. *")))
+    pinball = imread(next(fishing.glob("2. *")))
+    inside = _load()["Step 1"]
+    if goldrush_entry(inside) is not None:
+        raise SystemExit("Đang ở Goldrush không được dò lối vào")
+    finder = _finder()
+    for name, shot in (("sân", lobby), ("pinball", pinball)):
+        point = goldrush_entry(shot)
+        height, width = shot.shape[:2]
+        if point is None:
+            raise SystemExit(f"{name} phải có lối vào Goldrush")
+        if not (0.40 * width <= point[0] <= 0.60 * width) or point[1] < height * 0.85:
+            raise SystemExit(f"{name} bấm lệch nút Goldrush: {point}")
+        stop = threading.Event()
+        tape = _HomeTape(stop, shot)
+        runner = Runner(tape, tape.log, stop, finder)
+        runner.quick = True
+        runner.run()
+        if tape.taps != [point]:
+            raise SystemExit(f"{name}: phải bấm {point}, ra {tape.taps}")
+    print("sân và pinball: helper dắt vào Goldrush")
+
+
 def test_goldrush_waits_out_the_animation() -> None:
     """Sau cú bấm Goldrush phải chờ hết 2 giây hoạt cảnh rồi mới chụp tiếp."""
     from rally_tool.flow import GOLDRUSH_ANIM
@@ -222,8 +251,8 @@ def test_loop() -> None:
     back = read_screen(_finder(), shots["Step 4"]).back
     if len(step4) != 1 or abs(step4[0][1] - back.x) > 25 or abs(step4[0][2] - back.y) > 25:
         raise SystemExit(f"Màn đã xin phải bấm back, ra {step4}")
-    if not any("cuối chat" in line for line in tape.lines):
-        raise SystemExit("Hết Join phải đứng cuối chat")
+    if not any("chờ rally" in line for line in tape.lines):
+        raise SystemExit("Hết Join phải chờ rally mới")
     step2 = [item for item in tape.taps if item[0] == "Step 2"]
     if any(item[1] == "swipe" for item in step2):
         raise SystemExit("Chat đang có Join mà vẫn kéo, cú bấm sẽ trượt")
@@ -435,6 +464,73 @@ def test_reward() -> None:
         print(f"{path.stem}: đóng bằng Confirm")
 
 
+def test_blurred_reward() -> None:
+    """Hộp thưởng đang mờ vẫn bấm Confirm, không đứng chờ rồi mới mở chat."""
+    finder = _finder()
+    path = RALLY / "Blur. Nhan diem rally.png"
+    if not path.exists():
+        raise SystemExit("Thiếu ảnh hộp thưởng đang mờ")
+    shot = imread(path)
+    reading = read_screen(finder, shot)
+    button = faint_confirm(shot)
+    if reading.scene != "reward" or button is None:
+        raise SystemExit(f"Hộp mờ ra {reading.scene}, nút {button}")
+    if abs(button.x - reading.width / 2) > reading.width * 0.08:
+        raise SystemExit("Confirm mờ không nằm giữa")
+    if not (0.75 * reading.height <= button.y <= 0.92 * reading.height):
+        raise SystemExit(f"Confirm mờ lệch: {button.y}")
+    stop = threading.Event()
+    tape = _RewardTape(stop, shot)
+    runner = Runner(tape, tape.log, stop, finder)
+    runner.quick = True
+    runner.run()
+    if len(tape.taps) != 1:
+        raise SystemExit(f"Hộp mờ phải bấm một lần, ra {tape.taps}")
+    x, y = tape.taps[0]
+    if abs(x - button.x) > 20 or abs(y - button.y) > 20:
+        raise SystemExit(f"Bấm lệch Confirm mờ {(x, y)} so với {(button.x, button.y)}")
+    print("hộp thưởng mờ: bấm Confirm")
+
+
+def test_map_opens_chat_once() -> None:
+    """Bản đồ còn đó sau cú bấm thì không bấm chat lần hai."""
+    shot = _load()["Step 1"]
+    reading = read_screen(_finder(), shot)
+    if reading.scene != "map" or reading.chat is None:
+        raise SystemExit("Ảnh bản đồ không còn nút chat")
+    stop = threading.Event()
+    tape = _Stay(stop, shot)
+    runner = Runner(tape, tape.log, stop, _finder())
+    runner.quick = True
+    runner.run()
+    if tape.taps != [(reading.chat.x, reading.chat.y)]:
+        raise SystemExit(f"Phải mở chat đúng một lần, ra {tape.taps}")
+    print("bản đồ: mở chat một lần")
+
+
+class _Stay:
+    def __init__(self, stop, shot):
+        self.stop = stop
+        self.shot = shot
+        self.taps = []
+        self.n = 0
+
+    def screenshot(self):
+        self.n += 1
+        if self.n > 6:
+            self.stop.set()
+        return self.shot
+
+    def tap(self, x: int, y: int) -> None:
+        self.taps.append((int(x), int(y)))
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 350) -> None:
+        raise SystemExit("Đang chờ chat không được kéo")
+
+    def log(self, message: str) -> None:
+        return None
+
+
 def test_dialog() -> None:
     """Hộp Rally Incomplete bấm Confirm. Không bấm nút X đáy màn."""
     finder = _finder()
@@ -488,7 +584,7 @@ class _DialogTape:
 
     def log(self, message: str) -> None:
         self.lines.append(message)
-        if "Confirm" not in message and "Auto join" not in message and "Đã dừng" not in message:
+        if "Confirm" not in message and "Bắt đầu" not in message and "Đã dừng" not in message:
             raise SystemExit(f"Log lạ trên hộp thoại: {message}")
 
 
@@ -509,7 +605,7 @@ class _RewardTape:
         raise SystemExit("Hộp thưởng không được kéo")
 
     def log(self, message: str) -> None:
-        if "hoàn thành" not in message and "Auto join" not in message and "Đã dừng" not in message:
+        if "hoàn thành" not in message and "Bắt đầu" not in message and "Đã dừng" not in message:
             raise SystemExit(f"Log lạ trên hộp thưởng: {message}")
 
 
@@ -530,8 +626,13 @@ def test_window() -> None:
             raise SystemExit("Chế độ rally không hiện")
         if app.primary_btn.cget("text") != "▶  Bắt đầu":
             raise SystemExit("Nút chạy phải là Bắt đầu khi chưa chạy")
-        if "nút xanh" not in app.hint_var.get():
+        hint = app.hint_var.get().lower()
+        if "tham gia" not in hint or "dừng" not in hint:
             raise SystemExit("Thiếu hướng dẫn rally")
+        if app.rally_page.winfo_children():
+            raise SystemExit("Trang rally không được hiện ghi chú")
+        if "nút" in hint or "frostnip" in hint:
+            raise SystemExit("Hướng dẫn rally còn chi tiết kỹ thuật")
         called = []
         app.start_rally = lambda: called.append("rally")
         app.run_current()
@@ -616,6 +717,7 @@ def main() -> None:
     test_scenes()
     test_other_screens()
     test_returns_home()
+    test_helper_leads_into_goldrush()
     test_goldrush_waits_out_the_animation()
     test_loop()
     test_first_chat_does_not_tap_around()
@@ -623,6 +725,8 @@ def main() -> None:
     test_jump_down()
     test_list_does_not_stick()
     test_reward()
+    test_blurred_reward()
+    test_map_opens_chat_once()
     test_dialog()
     test_window()
     print("self-test rally ok")

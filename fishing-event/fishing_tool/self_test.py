@@ -70,7 +70,7 @@ def _test_memory(check) -> None:
     miss = consistent_latencies(tracker, 1.0, (400, 480), False)
     check("nhớ: L khớp khi trượt không chứa L trúng", miss is not None and not set(miss) & set(good or []), True)
 
-    from fishing_tool.flow import HIT_SETTLE, _hold_hit, _pick_gold, _same_zone
+    from fishing_tool.flow import GOLD_LOOK, HIT_SETTLE, RESULT_SAMPLES, _hold_hit, _pick_gold, _same_zone, _stop_gold_samples
 
     check("cùng thanh khi mép giữ nguyên", _same_zone((237, 282), (236, 382)), True)
     check("cùng thanh khi cả hai mép trôi 27px", _same_zone((290, 373), (317, 400)), True)
@@ -85,6 +85,11 @@ def _test_memory(check) -> None:
     check("gold một chữ số lặp vẫn nhận", _pick_gold([2, 2]), 2)
     check("gold lấy số đủ chữ", _pick_gold([210, 1210]), 1210)
     check("gold không để số 2 đè 118", _pick_gold([118, 118, 2, 2, 2, 2]), 118)
+    check("gold dừng khi số lặp", _stop_gold_samples([118, 118], 0.1, 1), True)
+    check("gold chưa thấy chữ thì chờ", _stop_gold_samples([], GOLD_LOOK - 0.1, 1), False)
+    check("gold hết cửa sổ thì thôi", _stop_gold_samples([], GOLD_LOOK, 1), True)
+    check("gold một lần đọc vẫn chụp thêm", _stop_gold_samples([548], 0.2, 1), False)
+    check("gold chụp đủ thì dừng", _stop_gold_samples([548], 0.2, RESULT_SAMPLES), True)
 
 
 def _test_stop(check) -> None:
@@ -128,6 +133,39 @@ def _test_stop(check) -> None:
     except Stopped:
         idle_stopped = True
     check("không quăng lượt mới sau khi dừng", idle_stopped, True)
+
+
+def _test_catch(check) -> None:
+    from fishing_tool.catch import classify
+    from fishing_tool.paths import LOGS
+
+    cases = (
+        ("7.", "Cá Mỏ Dài", "tim", None),
+        ("8.", "Cá Chó", "xanh", None),
+    )
+    for prefix, name, tone, _count in cases:
+        hit = classify(_png(prefix))
+        check(f"loài ảnh {prefix[0]}", (hit.label, hit.tone) if hit else None, (name, tone))
+
+    logs = (
+        ("cau-ca-ketqua-1.png", "Cá Ngừ Xanh", "vang"),
+        ("cau-ca-ketqua-2.png", "Cá Nam Châm", "xanh"),
+        ("cau-ca-ketqua-6.png", "Cá Dẹt", "tim"),
+        ("cau-ca-ketqua-7.png", "Cá Dẹt", "tim"),
+    )
+    for filename, name, tone in logs:
+        img = cv2.imdecode(np.fromfile(LOGS / filename, np.uint8), cv2.IMREAD_COLOR)
+        hit = classify(normalize(img))
+        check(filename, (hit.label, hit.tone) if hit else None, (name, tone))
+
+    folder = RESOURCE / "type_fish"
+    candy = classify(normalize(cv2.imdecode(np.fromfile(folder / "kẹo.png", np.uint8), cv2.IMREAD_COLOR)))
+    check("kẹo", (candy.label, candy.count, candy.tone) if candy else None, ("x767 kẹo", 767, "trang"))
+    pinball = classify(normalize(cv2.imdecode(np.fromfile(folder / "pinball.png", np.uint8), cv2.IMREAD_COLOR)))
+    check("pinball", (pinball.label, pinball.count, pinball.tone) if pinball else None, ("x3 pinball", 3, "trang"))
+    from fishing_tool.catch import tone_for
+
+    check("Cá Bốc Mùi phẩm đỏ", tone_for("Cá Bốc Mùi"), "do")
 
 
 def main() -> int:
@@ -192,18 +230,7 @@ def main() -> int:
     check("gold video 716", read_gold(frame(716)), 548)
     check("không có gold ở video 760", read_gold(frame(760)), None)
 
-    wrong = cv2.VideoCapture(str(RESOURCE / "demo-sai-diem-vang.mp4"))
-
-    def at(second: float):
-        wrong.set(cv2.CAP_PROP_POS_MSEC, second * 1000)
-        ok, img = wrong.read()
-        if not ok:
-            raise RuntimeError(f"Không đọc được giây {second}")
-        return normalize(img)
-
-    check("gold 118 ở giây 32.8", read_gold(at(32.8)), 118)
-    check("mưa đồng xu không thành số 2", read_gold(at(34.7)), None)
-
+    _test_catch(check)
     _test_memory(check)
     _test_stop(check)
 

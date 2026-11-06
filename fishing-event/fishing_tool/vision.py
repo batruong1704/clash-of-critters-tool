@@ -22,7 +22,7 @@ BUTTON = (0.5, 0.82)
 RING_RADIUS = 0.125
 BADGE = (488 / REF_W, 985 / REF_H)
 # Vòng đổi hệ số của game: x1, x2, x3, x5, x10, x20, x50, x100 rồi về x1. x200 chưa thấy trong vòng đổi của tài khoản thử,
-# chỉ dùng được khi có ảnh mẫu templates/mult_200.png.
+# chỉ dùng được khi có ảnh mẫu data/templates/mult_200.png.
 MULTIPLIERS = (1, 2, 3, 5, 10, 20, 50, 100, 200)
 
 # Thanh trượt. Vùng vàng nằm trong dải hàng này, mồi đỏ cao hơn thanh một chút.
@@ -282,7 +282,7 @@ def read_gold(img) -> int | None:
     Đo trên demo-video.mp4: chữ vàng hiện khoảng giây 23,6 đến 24,2 rồi mất trước giây 24,4.
     Vùng đọc chỉ phủ hàng chữ đó (y khoảng 0,30–0,40). Không kéo xuống hàng số trắng, dòng cân nặng hay dòng Beat …%.
     Chữ vừa hiện thì nét còn cao hơn lúc đứng yên, nên khoảng chiều cao rộng hơn số rod.
-    demo-sai-diem-vang.mp4 giây 32: chữ là 118, rồi mưa đồng xu. Mưa đó không được đọc thành 2.
+    Mưa đồng xu sau số vàng không được đọc thành số 2.
     """
     if _coin_shower(img):
         return None

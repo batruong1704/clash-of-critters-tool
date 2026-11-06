@@ -6,10 +6,17 @@ rồi đứng ở cuối chat chờ đợt sau. Không gõ tin, không bấm g�
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from gift_tool.adb_client import AdbClient
 from gift_tool.vision import Finder, scene_signature, signature_diff
+from helpers.screen_detector import goldrush_entry
 from rally_tool.paths import LOGS
 
 from rally_tool.vision import (
@@ -18,6 +25,7 @@ from rally_tool.vision import (
     card_joins,
     chat_join_buttons,
     dialog_button,
+    faint_confirm,
     home_goldrush,
     jump_down,
     list_joins,
@@ -35,6 +43,8 @@ SCROLL_DIFF = 6.0
 # Ảnh thu nhỏ của hai khung chat khác nhau lệch khoảng 8. Ngưỡng này vẫn thấy một lần kéo thật.
 BOTTOM_DIFF = 4.0
 POLL = 2.5
+# Chat mở chậm. Bấm lần hai khi bản đồ còn trên màn sẽ hủy cú mở vừa gửi.
+CHAT_HOLD = 8.0
 GOLDRUSH_LOAD = 10.0
 # Hoạt cảnh vào Goldrush khoảng 2 giây. Chụp trong lúc này sẽ thấy màn đang trượt.
 GOLDRUSH_ANIM = 2.0
@@ -75,7 +85,7 @@ class Runner:
 
     def run(self) -> dict[str, int]:
         LOGS.mkdir(parents=True, exist_ok=True)
-        self.log("Auto join rally. Không tạo rally. Chạy đến khi bấm Dừng.")
+        self.log("Bắt đầu tham gia rally.")
         try:
             while True:
                 self._check()
@@ -83,7 +93,7 @@ class Runner:
                 reading = read_screen(self.finder, shot)
                 self._act(reading, shot)
         except Stopped:
-            self.log(f"Đã dừng. Đã xin {self.asked} rally, mở {self.opened} thẻ từ chat.")
+            self.log(f"Đã dừng. Đã tham gia {self.asked} rally.")
         return {"xin": self.asked, "mo": self.opened}
 
     def _act(self, reading: Reading, shot) -> None:
@@ -104,6 +114,8 @@ class Runner:
         if scene != "single":
             self._single_tries = 0
 
+        if scene in ("camp", "unknown") and self._enter_from_home(reading, shot):
+            return
         if scene == "camp":
             self._enter_goldrush(reading)
         elif scene == "map":
@@ -115,11 +127,23 @@ class Runner:
         elif scene == "multi":
             self._many_rallies(reading, shot)
         elif scene == "reward":
-            self._close_reward(reading)
+            self._close_reward(reading, shot)
         elif scene == "dialog":
             self._close_dialog(shot)
         else:
             self._unknown_screen(reading, shot)
+
+    def _enter_from_home(self, reading: Reading, shot) -> bool:
+        """Sân hoặc pinball thì bấm Goldrush. Đã ở trong mode thì để các nhánh kia xử lý."""
+        point = goldrush_entry(shot)
+        if point is None:
+            return False
+        known = home_goldrush(self.finder, shot)
+        if known is not None:
+            self._enter_goldrush(reading, known)
+            return True
+        self._enter_goldrush(reading, _Point(point[0], point[1]))
+        return True
 
     def _enter_goldrush(self, reading: Reading, hit=None) -> None:
         if time.time() < self._goldrush_hold:
@@ -141,9 +165,9 @@ class Runner:
         if time.time() < self._chat_hold:
             self._pause(0.3, 0.5)
             return
-        self.log("Mở chat Frostnip League.")
+        self.log("Mở chat.")
         self.adb.tap(reading.chat.x, reading.chat.y)
-        self._chat_hold = time.time() + 2.0
+        self._chat_hold = time.time() + CHAT_HOLD
         self._pause(*AFTER_TAP)
 
     def _in_chat(self, reading: Reading, shot) -> None:
@@ -173,8 +197,9 @@ class Runner:
         if not self._parked:
             self._park(shot)
             return
-        if time.time() >= self._bottom_check and self._moved_newer(shot):
-            self.log("Chưa ở tin mới nhất. Kéo xuống tiếp.")
+        # Self-test bật quick. Xử lý ảnh chậm hơn 6 giây không được tính là hết giờ chờ.
+        if not self.quick and time.time() >= self._bottom_check and self._moved_newer(shot):
+            self.log("Đang về tin mới nhất.")
             self._parked = False
             self._snapped = False
             self._climbed = 0
@@ -190,7 +215,7 @@ class Runner:
             return False
         target = topmost(cards)
         self.opened += 1
-        self.log(f"Mở rally từ chat ({self.opened}).")
+        self.log("Mở rally.")
         self._parked = False
         self._climbed = 0
         self._returning = False
@@ -213,7 +238,7 @@ class Runner:
         hit = jump_down(self.finder, shot)
         if hit is None:
             return False
-        self.log("Xuống tin mới nhất.")
+        self.log("Về tin mới nhất.")
         self.adb.tap(hit.x, hit.y)
         self._pause(*AFTER_TAP)
         self._jumped = True
@@ -228,7 +253,7 @@ class Runner:
         self._bottom_check = time.time() + BOTTOM_RECHECK
 
     def _park(self, shot) -> None:
-        self.log("Hết nút Join trong 10 tin. Đứng cuối chat chờ đợt sau.")
+        self.log("Đang chờ rally mới.")
         self._returning = True
         self._snapped = False
 
@@ -242,7 +267,7 @@ class Runner:
         if not moved:
             return True
         if not self._scroll_logged:
-            self.log("Kéo xuống tin mới nhất.")
+            self.log("Kéo về tin mới nhất.")
             self._scroll_logged = True
         later = read_screen(self.finder, after_shot)
         if later.scene == "chat":
@@ -268,12 +293,12 @@ class Runner:
         if target is not None and self._single_tries < 2:
             self._single_tries += 1
             self.asked += 1
-            self.log(f"Xin vào rally ({self.asked}).")
+            self.log("Đã tham gia.")
             self.adb.tap(target.x, target.y)
             self._pause(*AFTER_TAP)
             return
         if reading.back is None:
-            self.log("Màn một người không còn nút xanh và không thấy nút thoát.")
+            self.log("Chưa thấy nút thoát.")
             self._pause(0.4, 0.6)
             return
         self.log("Rời màn rally.")
@@ -286,7 +311,7 @@ class Runner:
         if targets and self._multi_stuck < 2:
             target = topmost(targets)
             self.asked += 1
-            self.log(f"Xin vào rally trong danh sách ({self.asked}).")
+            self.log("Đã tham gia.")
             self.adb.tap(target.x, target.y)
             self._pause(*AFTER_TAP)
             # Nút vừa bấm còn xanh thì chưa ăn. Nút khác phía dưới vẫn được bấm ở vòng sau.
@@ -304,21 +329,21 @@ class Runner:
                 self._multi_stuck = 0
                 return
         if reading.close is None:
-            self.log("Danh sách không còn nút xanh và không thấy nút X.")
+            self.log("Chưa thấy nút đóng.")
             self._pause(0.4, 0.6)
             return
-        self.log("Đóng danh sách rally.")
+        self.log("Đóng danh sách.")
         self.adb.tap(reading.close.x, reading.close.y)
         self._list_slides = 0
         self._multi_stuck = 0
         self._pause(*AFTER_TAP)
 
-    def _close_reward(self, reading: Reading) -> None:
-        target = reward_button(reading)
+    def _close_reward(self, reading: Reading, shot) -> None:
+        target = reward_button(reading) or faint_confirm(shot)
         if target is None:
             self._pause(0.4, 0.6)
             return
-        self.log("Đóng hộp hoàn thành rally.")
+        self.log("Đóng hộp hoàn thành.")
         self.adb.tap(target.x, target.y)
         self._pause(*AFTER_TAP)
 
@@ -343,7 +368,7 @@ class Runner:
 
             path = LOGS / "rally-khong-nhan-ra-man.png"
             imwrite(path, shot)
-            self.log(f"Chưa nhận ra màn hình, không bấm. Ảnh: {path}")
+            self.log(f"Chưa nhận ra màn hình. Ảnh: {path}")
         self._pause(0.6, 0.9)
 
     def _swipe_older(self, shot) -> None:
@@ -379,6 +404,12 @@ def _between(low: float, high: float) -> float:
     import random
 
     return random.uniform(low, high)
+
+
+class _Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
 
 
 def _same_bar(target, hits, width: int, height: int) -> bool:

@@ -241,6 +241,18 @@ def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
     return "Đã kéo code mới.", _notes_between(repo, local, new)
 
 
+def caught_fish(message: str) -> tuple[str, str] | None:
+    """Tên hiện trên bảng và màu chữ. None khi dòng không phải kết quả câu."""
+    if not message.startswith("Câu được"):
+        return None
+    label = message.split(", +", 1)[0][len("Câu được ") :].strip().rstrip(".")
+    if label == "cá":
+        return "Không rõ", "ok"
+    from fishing_tool.catch import tone_for
+
+    return label, tone_for(label)
+
+
 def fish_step(message: str) -> str | None:
     """Bước đang làm, hiện dưới các con số. Rỗng khi dòng chỉ là kết quả."""
     if "quăng cần" in message or message.startswith("Chưa thấy cần"):
@@ -256,7 +268,8 @@ def fish_step(message: str) -> str | None:
         ("Trượt", "Đang chỉnh cú bấm"),
         ("Trúng vùng", "Đã trúng vùng vàng"),
         ("Thất bại", "Thất bại"),
-        ("Câu được cá", "Đã câu được cá"),
+        ("Đang tính toán kết quả", "Đang tính toán kết quả"),
+        ("Câu được", "Đã câu được cá"),
         ("Không thấy màn kết quả", "Đang đọc kết quả"),
         ("Có popup", "Có popup chen vào"),
         ("Chưa nhận ra", "Chưa nhận ra màn hình"),
@@ -413,7 +426,7 @@ class Presenter:
         self.view.clear_results()
         self._lock()
         self._rally_asked = 0
-        self._status("Đang nối máy", ["Đã xin 0"])
+        self._status("Đang nối máy", ["Đã tham gia 0"])
         self.worker = threading.Thread(target=self._run_rally, daemon=True)
         self.worker.start()
 
@@ -529,14 +542,14 @@ class Presenter:
 
             def log(message: str) -> None:
                 self.view.append_log(message)
-                if "xin vào" in message.lower():
+                if message.lower().startswith("đã tham gia"):
                     self._rally_asked += 1
-                    self.view.add_result((str(self._rally_asked), message.split(".", 1)[0], ""))
+                    self.view.add_result((str(self._rally_asked), "Đã tham gia"))
                 step = message.split(".", 1)[0]
-                self._status(step, [f"Đã xin {self._rally_asked}"])
+                self._status(step, [f"Đã tham gia {self._rally_asked}"])
 
             counts = self.model.run_rally(adb, log, self.stop)
-            self._status(f"Xong. Đã xin {counts['xin']} rally.", [f"Đã xin {counts['xin']}"])
+            self._status(f"Xong. Đã tham gia {counts['xin']} rally.", [f"Đã tham gia {counts['xin']}"])
             self.view.toast("Đã dừng." if self.stop.is_set() else "Hoàn tất.")
         except Exception as exc:
             self.write(f"Lỗi: {exc}")
@@ -552,8 +565,10 @@ class Presenter:
             self.view.set_device(serial)
 
             def log(message: str) -> None:
-                self.view.append_log(message, fish_level(message))
-                self._note_fish_row(message)
+                caught = caught_fish(message)
+                level = caught[1] if caught else fish_level(message)
+                self.view.append_log(message, level)
+                self._note_fish_row(message, caught)
                 step = fish_step(message)
                 if step:
                     self._status(step)
@@ -617,7 +632,7 @@ class Presenter:
         if self.mode == "fish":
             self._status("Sẵn sàng", ["Dừng sau lượt đang câu, hoặc khi đủ lượt, hết rod"])
         elif self.mode == "rally":
-            self._status("Sẵn sàng", ["Chạy đến khi dừng"])
+            self._status("Sẵn sàng", ["Chạy đến khi bấm Dừng"])
         else:
             self._status("Sẵn sàng", [f"Dừng sau {MAX_GIFTS} quà"])
 
@@ -629,7 +644,7 @@ class Presenter:
                 return f"Câu {int(casts)} lượt · x{mult}"
             return "Câu cá"
         if self.mode == "rally":
-            return "Join rally đến khi dừng"
+            return "Tham gia đến khi dừng"
         if self.mode == "scan":
             count = self.view.scan_count_text().strip()
             if count.isdigit() and int(count) >= 1:
@@ -755,18 +770,22 @@ class Presenter:
 
         self.view.invoke(done)
 
-    def _note_fish_row(self, message: str) -> None:
+    def _note_fish_row(self, message: str, caught: tuple[str, str] | None = None) -> None:
         if message.startswith("Lượt ") and "quăng" in message:
             number = message.split(":", 1)[0].split()[1].split("/")[0]
             self._fish_turn = number
-            self._fish_iid = self.view.add_result((number, "Đang chạy…", ""))
-        elif message.startswith("Câu được cá"):
+            self._fish_iid = self.view.add_result((number, "Đang chạy…", "", ""))
+        elif caught is not None:
             gold = "–"
             if "+" in message and "Gold" in message:
                 gold = "+" + message.split("+", 1)[1].split()[0].rstrip(".")
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thành công", gold), "ok")
+            label, tone = caught
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thành công", label, gold), tone)
+        elif message.startswith("Đang tính toán kết quả"):
+            turn = getattr(self, "_fish_turn", "")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Đang tính toán kết quả", "…", "…"), "run")
         elif message.startswith("Thất bại"):
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thất bại", "–"), "fail")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thất bại", "–", "–"), "fail")
 
     def _note_gift_row(self, message: str) -> None:
         if self.mode == "fish":

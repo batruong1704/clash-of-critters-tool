@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 import winreg
 from tkinter import filedialog, messagebox, ttk
 
@@ -99,6 +100,12 @@ LIGHT = {
     "acc_t": "#ffffff",
     "ok": "#15803d",
     "gold": "#ca8a04",
+    "do": "#dc2626",
+    "xanh": "#2563eb",
+    "tim": "#7c3aed",
+    "vang": "#ea580c",
+    "trang": "#ffffff",
+    "trang_nen": "#1f2937",
     "warn": "#b45309",
     "err": "#b91c1c",
     "dbg": "#9ca3af",
@@ -115,6 +122,12 @@ DARK = {
     "acc_t": "#06312d",
     "ok": "#4ade80",
     "gold": "#facc15",
+    "do": "#fb7185",
+    "xanh": "#60a5fa",
+    "tim": "#c084fc",
+    "vang": "#fb923c",
+    "trang": "#ffffff",
+    "trang_nen": "#1f2937",
     "warn": "#fbbf24",
     "err": "#f87171",
     "dbg": "#6b7280",
@@ -125,11 +138,11 @@ DARK = {
 FISH_HINT = "Chạy được từ màn sân, Pinball hay Fishing Contest."
 GIFT_HINT = "Nhập danh sách ID cần xử lý."
 SCAN_HINT = "ID đầu là lượt 1. Mỗi lần sau cộng thêm 1."
-RALLY_HINT = "Tự vào và tham gia rally. Chỉ bấm nút xanh, không tạo rally."
+RALLY_HINT = "Tự tham gia các rally đang mở. Chạy đến khi bấm Dừng."
 START_LABEL = "▶  Bắt đầu"
 STOP_LABEL = "■  Dừng"
 HOLD_LABEL = "■  Câu nốt"
-OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "xin vào", "câu được cá", "thành công")
+OK_MARKS = ("đã nhận quà", "đã bấm select và ok", "quà, dừng", "đã tham gia", "xin vào", "câu được cá", "thành công")
 BAD_MARKS = (
     "lỗi",
     "timeout",
@@ -480,6 +493,199 @@ class NotesDialog:
             self.view._notes_dialog = None
 
 
+_BLANK_CELL = frozenset({"", "–", "…", "-", "—"})
+_RARITY = frozenset({"do", "xanh", "tim", "vang", "trang"})
+_COLUMN_WEIGHT = {
+    "Lượt": 8,
+    "Lần": 8,
+    "UID": 16,
+    "Kết quả": 18,
+    "Phân loại": 28,
+    "Gold": 12,
+    "Ghi chú": 28,
+}
+
+
+def result_cell_colors(title: str, value: str, tone: str, colors: dict[str, str], theme_name: str) -> tuple[str, str]:
+    """Màu chữ và nền riêng của ô. Nền rỗng thì dùng nền dòng."""
+    blank = value.strip() in _BLANK_CELL
+    if title in ("Lượt", "Lần"):
+        return ("#ffffff" if theme_name == "dark" else "#111827"), ""
+    if title == "Kết quả":
+        text = value.strip().lower()
+        if text == "thành công":
+            return colors["ok"], ""
+        if text == "thất bại":
+            return colors["err"], ""
+        if tone == "ok":
+            return colors["ok"], ""
+        if tone in ("fail", "err"):
+            return colors["err"], ""
+        if tone == "warn":
+            return colors["warn"], ""
+        return colors["mute"], ""
+    if title == "Phân loại":
+        if blank or tone not in _RARITY:
+            return colors["mute"] if blank else colors["text"], ""
+        if tone == "trang":
+            # Chữ trắng giữ nguyên. Nền đệm khác nền dòng để còn đọc được ở cả hai giao diện.
+            chip = "#3f4654" if theme_name == "dark" else "#1f2937"
+            return "#ffffff", chip
+        return colors[tone], ""
+    if title == "Gold":
+        return (colors["mute"] if blank else colors["gold"]), ""
+    if title == "Ghi chú" and tone == "ok":
+        return colors["ok"], ""
+    if title == "Ghi chú" and tone in ("fail", "err"):
+        return colors["err"], ""
+    return colors["text"], ""
+
+
+class ResultBoard:
+    """Bảng kết quả tự vẽ. Treeview chỉ tô được cả dòng, không tô được từng cột."""
+
+    ROW_H = 30
+
+    def __init__(self, parent: tk.Frame) -> None:
+        self.colors = dict(LIGHT)
+        self.theme_name = "light"
+        self.headers: tuple[str, ...] = ()
+        self.rows: list[dict] = []
+        self._by_id: dict[str, dict] = {}
+        self._heads: list[tk.Label] = []
+        self._font = tkfont.Font(font=UI_FONT)
+        self._drawing = False
+        self.frame = tk.Frame(parent, highlightthickness=0, bd=0)
+        self.frame.columnconfigure(0, weight=1)
+        self.frame.rowconfigure(1, weight=1)
+        self.header = tk.Frame(self.frame, height=32, highlightthickness=0, bd=0)
+        self.header.grid(row=0, column=0, sticky="ew")
+        self.header.grid_propagate(False)
+        self.canvas = tk.Canvas(self.frame, highlightthickness=0, bd=0)
+        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.scroll = tk.Scrollbar(self.frame, command=self.canvas.yview, width=14)
+        self.scroll.grid(row=0, column=1, rowspan=2, sticky="ns")
+        self.canvas.configure(yscrollcommand=self.scroll.set)
+        self.canvas.bind("<Configure>", lambda _event: self.redraw())
+        self.canvas.bind("<MouseWheel>", self._wheel)
+        self.header.bind("<MouseWheel>", self._wheel)
+
+    def set_theme(self, colors: dict[str, str], theme_name: str) -> None:
+        self.colors = colors
+        self.theme_name = theme_name
+        self.frame.configure(bg=colors["log"])
+        self.header.configure(bg=colors["tile"])
+        self.canvas.configure(bg=colors["log"])
+        self.scroll.configure(
+            bg=colors["tile"],
+            troughcolor=colors["log"],
+            activebackground=colors["mute"],
+            highlightthickness=0,
+            bd=0,
+        )
+        for label in self._heads:
+            label.configure(bg=colors["tile"], fg=colors["mute"])
+        self.redraw()
+
+    def set_columns(self, headers: tuple[str, ...]) -> None:
+        self.headers = tuple(headers)
+        for label in self._heads:
+            label.destroy()
+        self._heads = []
+        for title in self.headers:
+            label = tk.Label(
+                self.header,
+                text=title,
+                anchor="w",
+                font=("Segoe UI", 9, "bold"),
+                bg=self.colors["tile"],
+                fg=self.colors["mute"],
+                padx=10,
+            )
+            self._heads.append(label)
+        self.redraw()
+
+    def clear(self) -> None:
+        self.rows.clear()
+        self._by_id.clear()
+        self.redraw()
+
+    def add(self, iid: str, values: tuple[str, ...]) -> None:
+        row = {"iid": iid, "values": values, "tone": "run"}
+        self.rows.insert(0, row)
+        self._by_id[iid] = row
+        self.redraw()
+
+    def finish(self, iid: str, values: tuple[str, ...], tone: str) -> None:
+        row = self._by_id.get(iid)
+        if row is None:
+            return
+        row["values"] = values
+        row["tone"] = tone
+        self.redraw()
+
+    def redraw(self) -> None:
+        if self._drawing:
+            return
+        self._drawing = True
+        try:
+            self._draw()
+        finally:
+            self._drawing = False
+
+    def _spans(self, width: int) -> list[tuple[int, int]]:
+        weights = [_COLUMN_WEIGHT.get(title, 12) for title in self.headers] or [1]
+        total = sum(weights)
+        spans: list[tuple[int, int]] = []
+        x = 0
+        usable = max(width, 1)
+        for index, weight in enumerate(weights):
+            x1 = usable if index == len(weights) - 1 else x + max(48, int(usable * weight / total))
+            spans.append((x, x1))
+            x = x1
+        return spans
+
+    def _fit(self, text: str, max_px: int) -> str:
+        if max_px <= 12 or not text or self._font.measure(text) <= max_px:
+            return text
+        ell = "…"
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self._font.measure(text[:mid] + ell) <= max_px:
+                lo = mid
+            else:
+                hi = mid - 1
+        return (text[:lo] + ell) if lo else ell
+
+    def _draw(self) -> None:
+        canvas = self.canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 1)
+        spans = self._spans(width)
+        for label, (x0, x1) in zip(self._heads, spans):
+            label.place(x=x0, y=0, width=max(1, x1 - x0), height=32)
+        colors = self.colors
+        y = 0
+        for row in self.rows:
+            canvas.create_rectangle(0, y, width, y + self.ROW_H, fill=colors["log"], outline="")
+            for col, title in enumerate(self.headers):
+                value = row["values"][col] if col < len(row["values"]) else ""
+                fg, chip = result_cell_colors(title, value, row["tone"], colors, self.theme_name)
+                x0, x1 = spans[col]
+                shown = self._fit(value, max(8, x1 - x0 - 20))
+                if chip and shown.strip():
+                    chip_x1 = min(x1 - 4, x0 + 8 + self._font.measure(shown) + 12)
+                    canvas.create_rectangle(x0 + 4, y + 4, chip_x1, y + self.ROW_H - 4, fill=chip, outline="")
+                canvas.create_text(x0 + 10, y + self.ROW_H / 2, text=shown, anchor="w", fill=fg, font=UI_FONT)
+            canvas.create_line(0, y + self.ROW_H - 1, width, y + self.ROW_H - 1, fill=colors["line"])
+            y += self.ROW_H
+        canvas.configure(scrollregion=(0, 0, width, max(y, 1)))
+
+    def _wheel(self, event) -> None:
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+
 def fish_level(message: str) -> str:
     """Mức dòng log câu cá. Chi tiết cú bấm để ẩn cho đến khi bật hiện."""
     if message.startswith("Lượt "):
@@ -657,7 +863,7 @@ class MainView:
 
         self.tiles_row = tk.Frame(self.main)
         self.tiles_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(10, 0))
-        self.tile_order = ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã xin", "Quà", "UID", "Pinball")
+        self.tile_order = ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã tham gia", "Quà", "UID", "Pinball")
         self.tiles = {}
         for index, name in enumerate(self.tile_order):
             self.tiles_row.columnconfigure(index, weight=1)
@@ -685,11 +891,8 @@ class MainView:
         self.result_pane.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         self.result_pane.columnconfigure(0, weight=1)
         self.result_pane.rowconfigure(0, weight=1)
-        self.results = ttk.Treeview(self.result_pane, columns=("a", "b", "c"), show="headings", style="App.Treeview")
-        self.results.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(self.result_pane, command=self.results.yview)
-        self.results.configure(yscrollcommand=scroll.set)
-        scroll.grid(row=0, column=1, sticky="ns")
+        self.sheet = ResultBoard(self.result_pane)
+        self.sheet.frame.grid(row=0, column=0, sticky="nsew")
         self.set_columns(("Lượt", "Kết quả", "Gold"))
 
         self.log_pane = tk.Frame(views, highlightthickness=1)
@@ -874,14 +1077,8 @@ class MainView:
         return page
 
     def _rally_form(self, parent) -> tk.Frame:
-        page = tk.Frame(parent)
-        for text in (
-            "Bấm Join xanh trong chat Frostnip League.",
-            "Không tạo rally và không bấm nút xám.",
-            "Chạy đến khi bấm Dừng.",
-        ):
-            tk.Label(page, text=text, font=UI_FONT, anchor="w", justify="left", wraplength=HINT_WRAP).pack(anchor="w", pady=(0, 6))
-        return page
+        """Không có ô nhập. Cách bấm trong game không hiện cho người dùng."""
+        return tk.Frame(parent)
 
     def _scan_form(self, parent, scan_max: int) -> tk.Frame:
         page = tk.Frame(parent)
@@ -910,17 +1107,17 @@ class MainView:
         self.mode_var.set(mode)
         for page in (self.fish_page, self.rally_page, self.scan_page, self.list_page):
             page.pack_forget()
-        titles = {"fish": "Tự câu cá", "rally": "Auto join rally", "scan": "Quét ID", "list": "Nhận quà"}
+        titles = {"fish": "Tự câu cá", "rally": "Tham gia rally", "scan": "Quét ID", "list": "Nhận quà"}
         hints = {"fish": FISH_HINT, "rally": RALLY_HINT, "scan": SCAN_HINT, "list": GIFT_HINT}
         columns = {
-            "fish": ("Lượt", "Kết quả", "Gold"),
-            "rally": ("Lần", "Việc", ""),
+            "fish": ("Lượt", "Kết quả", "Phân loại", "Gold"),
+            "rally": ("Lần", "Kết quả"),
             "scan": ("UID", "Kết quả", "Ghi chú"),
             "list": ("UID", "Kết quả", "Ghi chú"),
         }
         tiles = {
             "fish": ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn"),
-            "rally": ("Đã xin",),
+            "rally": ("Đã tham gia",),
             "scan": ("Quà", "UID", "Pinball"),
             "list": ("Quà", "UID", "Pinball"),
         }
@@ -954,23 +1151,31 @@ class MainView:
             box, value, _caption = self.tiles[name]
             if name in names:
                 box.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
+                self.tiles_row.columnconfigure(column, weight=1)
                 tone = "gold" if name == "Gold" else "text"
                 self._tile_tones[name] = tone
                 value.configure(
                     text="—" if name == "Rod còn" else "0",
                     fg=self.colors[tone],
+                    bg=self.colors["tile"],
                 )
                 column += 1
             else:
                 box.grid_remove()
         for index in range(len(self.tile_order)):
-            self.tiles_row.columnconfigure(index, weight=1 if index < max(column, 1) else 0)
+            if index >= column:
+                self.tiles_row.columnconfigure(index, weight=0)
 
-    def set_columns(self, headers: tuple[str, str, str]) -> None:
-        widths = (80, 160, 120)
-        for key, title, width in zip(("a", "b", "c"), headers, widths):
-            self.results.heading(key, text=title)
-            self.results.column(key, width=width, anchor="w", stretch=key == "b")
+    def set_columns(self, headers: tuple[str, ...]) -> None:
+        self._headers = tuple(headers)
+        self.sheet.set_columns(self._headers)
+
+    def _pad(self, values) -> tuple[str, ...]:
+        vals = tuple(str(item) for item in values)
+        width = len(getattr(self, "_headers", ())) or 3
+        if len(vals) < width:
+            vals = vals + ("",) * (width - len(vals))
+        return vals[:width]
 
     def set_action(self, _text: str) -> None:
         """Nút chạy luôn là Bắt đầu hoặc Dừng, không đổi theo số lượt."""
@@ -1044,10 +1249,10 @@ class MainView:
                         progress = (self._number(current), self._number(total), f"UID {value}")
                 elif item.startswith("Pinball "):
                     self._tile("Pinball", item.split(" ", 1)[1])
-                elif item.startswith("Đã xin "):
-                    value = item.split(" ", 1)[1]
-                    self._tile("Đã xin", value, "ok")
-                    progress = (self._number(value), 0, f"Đã xin {value}")
+                elif item.startswith("Đã tham gia "):
+                    value = item.removeprefix("Đã tham gia ").strip()
+                    self._tile("Đã tham gia", value, "ok")
+                    progress = (self._number(value), 0, f"Đã tham gia {value}")
             if progress is None:
                 self._set_bar(step, 0, 0)
             else:
@@ -1176,9 +1381,7 @@ class MainView:
     def _release_log_memory(self) -> None:
         def apply() -> None:
             self._new_log_box()
-            children = self.results.get_children()
-            for start in range(0, len(children), 400):
-                self.results.delete(*children[start : start + 400])
+            self.sheet.clear()
             self._row_seq = 0
             self._paint()
             gc.collect()
@@ -1189,31 +1392,28 @@ class MainView:
 
     def clear_results(self) -> None:
         def apply() -> None:
-            children = self.results.get_children()
-            if children:
-                self.results.delete(*children)
+            self.sheet.clear()
 
         self.invoke(apply)
 
-    def add_result(self, values: tuple[str, str, str]) -> str:
+    def add_result(self, values) -> str:
         self._row_seq += 1
         iid = f"r{self._row_seq}"
-        vals = tuple(values)
+        vals = self._pad(values)
 
-        def apply(iid: str = iid, vals: tuple[str, str, str] = vals) -> None:
-            self.results.insert("", 0, iid=iid, values=vals, tags=("run",))
+        def apply(iid: str = iid, vals: tuple[str, ...] = vals) -> None:
+            self.sheet.add(iid, vals)
 
         self.invoke(apply)
         return iid
 
-    def finish_result(self, iid: str, values: tuple[str, str, str], tone: str) -> None:
+    def finish_result(self, iid: str, values, tone: str) -> None:
         if not iid:
             return
-        vals = tuple(values)
+        vals = self._pad(values)
 
-        def apply(iid: str = iid, vals: tuple[str, str, str] = vals, tone: str = tone) -> None:
-            if self.results.exists(iid):
-                self.results.item(iid, values=vals, tags=(tone,))
+        def apply(iid: str = iid, vals: tuple[str, ...] = vals, tone: str = tone) -> None:
+            self.sheet.finish(iid, vals, tone)
 
         self.invoke(apply)
 
@@ -1439,19 +1639,27 @@ class MainView:
         finally:
             self._ids_guard = False
 
+    def _tone_paint(self, tone: str) -> tuple[str, str]:
+        """Màu chữ và nền. Phẩm trắng trên giao diện sáng cần dải tối để chữ trắng còn đọc được."""
+        fg = self.colors.get(tone, self.colors["text"])
+        if tone == "trang" and self.theme_name == "light":
+            return self.colors["trang"], self.colors["trang_nen"]
+        return fg, ""
+
     def _tile(self, name: str, value: str, tone: str = "text") -> None:
         if name not in self.tiles:
             return
         _box, label, _caption = self.tiles[name]
         self._tile_tones[name] = tone
-        label.configure(text=value, fg=self.colors.get(tone, self.colors["text"]))
+        fg, bg = self._tone_paint(tone)
+        label.configure(text=value, fg=fg, bg=bg or self.colors["tile"])
 
     def _set_bar(self, label: str, current: int, total: int) -> None:
         self._bar_current = current
         self._bar_total = total
         self.progress_var.set(label)
         if total <= 0:
-            self.percent_var.set("0%")
+            self.percent_var.set("" if label.startswith("Đã tham gia") else "0%")
         else:
             self.percent_var.set(f"{round(current / total * 100)}%")
         self._draw_bar()
@@ -1592,7 +1800,8 @@ class MainView:
         for name, (box, value, caption) in self.tiles.items():
             box.configure(bg=colors["tile"], highlightbackground=colors["line"])
             tone = self._tile_tones.get(name, "text")
-            value.configure(bg=colors["tile"], fg=colors.get(tone, colors["text"]))
+            fg, bg = self._tone_paint(tone)
+            value.configure(bg=bg or colors["tile"], fg=fg)
             caption.configure(bg=colors["tile"], fg=colors["mute"])
         self._mark_mode(self.mode_var.get())
         for button in self._mode_buttons.values():
@@ -1623,20 +1832,13 @@ class MainView:
             page.configure(bg=colors["panel"])
             self._paint_children(page, colors)
         self._paint_inputs()
-        self.style.configure(
-            "App.Treeview",
-            background=colors["log"],
-            fieldbackground=colors["log"],
-            foreground=colors["text"],
-            borderwidth=0,
-            rowheight=28,
-            font=UI_FONT,
-        )
-        self.style.configure("App.Treeview.Heading", background=colors["tile"], foreground=colors["mute"], relief="flat", font=("Segoe UI", 9, "bold"))
-        self.style.map("App.Treeview", background=[("selected", colors["tile"])], foreground=[("selected", colors["text"])])
-        self.results.tag_configure("run", foreground=colors["mute"])
-        self.results.tag_configure("ok", foreground=colors["ok"])
-        self.results.tag_configure("fail", foreground=colors["err"])
+        for tone in ("do", "xanh", "tim", "vang", "trang"):
+            fg, bg = self._tone_paint(tone)
+            if bg:
+                self.log_box.tag_configure(tone, foreground=fg, background=bg)
+            else:
+                self.log_box.tag_configure(tone, foreground=fg, background=colors["log"])
+        self.sheet.set_theme(colors, self.theme_name)
         self._show_view(self._view_name)
         self._draw_bar()
 
