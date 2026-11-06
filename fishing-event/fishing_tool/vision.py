@@ -30,6 +30,13 @@ SLIDER_ZONE_Y = (0.665, 0.685)
 SLIDER_BOB_Y = (0.640, 0.700)
 SLIDER_X = (0.22, 0.80)
 SLIDER_MIN_YELLOW = 500
+# Cú bấm trúng: game nổ một vệt trắng đè lên thanh trong khoảng 0,27s rồi hiện chữ Cool!/Great!/Perfect! phía trên.
+# Đo trên video 7/11 (máy này và máy người dùng khác): vệt trắng chiếm 0,41–0,43 dải thanh lúc mới nổ, tụt về 0,15
+# ở ba khung cuối; thanh bình thường 0,08–0,13. Chữ Great hồng (hue 140–175), Perfect cam (hue 5–25), mỗi chữ
+# hơn 2.500 điểm đậm màu; Cool xanh lơ trùng màu nước nên không đếm.
+FLASH_STRIP_Y = (0.656, 0.695)
+FLASH_TEXT_Y = (0.570, 0.648)
+FLASH_TEXT_X = (0.25, 0.75)
 
 # Khoảng đi của tâm mồi trên ảnh 720. Video tỉ lệ trượt, lượt khó: tâm nảy ở khoảng 206 và 536.
 # Mốc cũ 199 và 532 làm cú bấm sau cú nảy tới muộn khoảng 20px, trượt vùng cuối rộng 36px.
@@ -147,6 +154,23 @@ def read_slider(img) -> Slider:
     return Slider(lo, hi, pointer)
 
 
+def read_flash(img, hsv=None) -> tuple[float, int]:
+    """(phần dải thanh bị vệt trắng phủ, số điểm chữ Great/Perfect). Thanh thường cho khoảng (0,10, 0)."""
+    if hsv is None:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    x0, x1 = int(SLIDER_X[0] * REF_W), int(SLIDER_X[1] * REF_W)
+    strip = hsv[int(FLASH_STRIP_Y[0] * REF_H) : int(FLASH_STRIP_Y[1] * REF_H), x0:x1]
+    white = float(((strip[..., 1] < 50) & (strip[..., 2] > 230)).mean())
+    above = hsv[
+        int(FLASH_TEXT_Y[0] * REF_H) : int(FLASH_TEXT_Y[1] * REF_H),
+        int(FLASH_TEXT_X[0] * REF_W) : int(FLASH_TEXT_X[1] * REF_W),
+    ]
+    hue = above[..., 0][(above[..., 1] > 120) & (above[..., 2] > 150)]
+    pink = int(((hue >= 140) & (hue <= 175)).sum())
+    orange = int(((hue >= 5) & (hue <= 25)).sum())
+    return white, max(pink, orange)
+
+
 def read_scene(img, templates: Templates) -> Scene:
     """Đoán màn hình hiện tại. img đã ở 720x1280."""
     ring = ring_kind(img)
@@ -163,9 +187,10 @@ def read_scene(img, templates: Templates) -> Scene:
         if _fraction(hsv, (0.24, 0.595, 0.78, 0.69), (125, 160), 90, 90) > 0.25:
             return Scene("reel", ring)
         slider = read_slider(img)
+        detail = {"slider": slider, "flash": read_flash(img, hsv)}
         if slider.lo is not None and slider.pointer is not None:
-            return Scene("slider", ring, {"slider": slider})
-        return Scene("busy", ring, {"slider": slider})
+            return Scene("slider", ring, detail)
+        return Scene("busy", ring, detail)
     if templates.find(img, "camp_btn", (560, 1200, 720, 1280)) is not None:
         return Scene("pinball", ring)
     if templates.find(img, "pinball_btn", (560, 1200, 720, 1280)) is not None:

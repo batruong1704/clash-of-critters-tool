@@ -30,6 +30,13 @@ FIT_RMS_MAX = 40.0  # đường mồi khớp tệ hơn mức này (px) thì khô
 MIN_SAMPLES = 6
 # Vùng ăn thật chỉ nhỏ hơn vùng vàng nhìn thấy: khớp 95% khi chỉ tính 50-80% nửa vùng, còn 90% khi tính cả vùng.
 ZONE_TRUST = 0.7  # số mẫu tối thiểu của thanh để học từ cú bấm đó
+# Độ trễ cú bấm hợp lý trên emulator: máy này 0,29s, máy chậm đã gặp 0,50s.
+DELAY_MIN = 0.15
+DELAY_MAX = 0.70
+
+
+def _clamp_delay(value: float) -> float:
+    return round(min(DELAY_MAX, max(DELAY_MIN, value)), 3)
 
 
 def _hit_center(tap: dict) -> float | None:
@@ -78,7 +85,7 @@ class Memory:
         self.path = path
         self.enabled = enabled
         self.taps: list[dict] = []
-        self._late_lead = 0.0
+        self._tap_delay: float | None = None
         if enabled:
             self._load()
 
@@ -87,10 +94,11 @@ class Memory:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             taps = data.get("taps", [])
             self.taps = [t for t in taps if isinstance(t, dict) and "hit" in t]
-            self._late_lead = min(0.20, max(0.0, float(data.get("late_lead") or 0.0)))
+            raw = data.get("tre_may")
+            self._tap_delay = None if raw is None else _clamp_delay(float(raw))
         except (OSError, ValueError, AttributeError, TypeError):
             self.taps = []
-            self._late_lead = 0.0
+            self._tap_delay = None
 
     def _save(self) -> None:
         if not self.enabled:
@@ -100,7 +108,7 @@ class Memory:
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(
                 json.dumps(
-                    {"version": 2, "late_lead": self._late_lead, "taps": self.taps[-KEEP_TAPS:]},
+                    {"version": 3, "tre_may": self._tap_delay, "taps": self.taps[-KEEP_TAPS:]},
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
@@ -113,14 +121,14 @@ class Memory:
     def hits(self) -> list[dict]:
         return [t for t in self.taps if t["hit"]]
 
-    def late_lead(self) -> float:
-        """Giây bù thêm khi cú bấm tới muộn hơn giả định. 0 nếu máy này chưa trượt kiểu đó."""
-        return self._late_lead
+    def tap_delay(self) -> float | None:
+        """Độ trễ cú bấm của máy này (giây, lệnh tới lúc game nổ chữ), đo từ các lần thấy chữ nổ. None khi chưa đo."""
+        return self._tap_delay
 
-    def set_late_lead(self, value: float) -> None:
+    def set_tap_delay(self, value: float) -> None:
         if not self.enabled:
             return
-        self._late_lead = round(min(0.20, max(0.0, float(value))), 3)
+        self._tap_delay = _clamp_delay(float(value))
         self._save()
 
     def latency(self) -> tuple[float, int] | None:

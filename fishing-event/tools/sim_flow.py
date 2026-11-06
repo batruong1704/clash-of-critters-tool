@@ -2,7 +2,8 @@
 
 Mồi trên thanh trượt được vẽ lại theo sóng tam giác. Trúng khi mồi nằm trong vùng vàng lúc cú bấm tới game.
 
-Chạy từ thư mục fishing-event: py -3 tools/sim_flow.py [tốc_độ_px_mỗi_giây] [số_thanh_trượt]
+Chạy từ thư mục fishing-event: py -3 tools/sim_flow.py [tốc_độ_px_mỗi_giây] [số_thanh_trượt] [trễ_bấm] [thời_gian_chụp]
+Ví dụ máy chậm như máy người dùng khác: py -3 tools/sim_flow.py 240 6 0.50 0.65
 """
 
 import sys
@@ -22,6 +23,8 @@ from fishing_tool.vision import POINTER_HI, POINTER_LO, normalize  # noqa: E402
 SHOT_TIME = 0.45
 SHOT_AT = 0.30
 TAP_DELAY = 0.25
+# Vệt trắng của cú trúng kéo dài 0,27s trước khi thanh mới hiện (video 7/11).
+FLASH_TIME = 0.27
 
 
 class FakeGame:
@@ -33,7 +36,8 @@ class FakeGame:
             return normalize(video.read()[1])
 
         self.idle, self.wait, self.reel = frame(290), frame(480), frame(612)
-        self.cool, self.result = frame(672), frame(722)
+        # Vệt trắng mờ dần như video: khung 667 lúc vừa nổ (0,43), 670 (0,18), 672 lúc sắp tắt (0,15).
+        self.cool, self.result = (frame(667), frame(670), frame(672)), frame(722)
         base = frame(640)
         self.sprite = base[812:902, 505:550].copy()
         clean = base.copy()
@@ -41,7 +45,8 @@ class FakeGame:
         self.clean = clean
         self.speed = speed
         self.sliders = sliders
-        self.zones = [(290, 437), (230, 330), (400, 480), (300, 380)]
+        # Độ rộng như game: 147, 110, 73, 36px (cá đỏ có tới 4 thanh 36px).
+        self.zones = [(290, 437), (230, 340), (400, 473), (300, 336), (380, 416), (250, 286)]
         self.state = "idle"
         self.since = time.time()
         self.shown = 0
@@ -51,6 +56,7 @@ class FakeGame:
         self.log = []
 
     def pointer(self, when):
+        # Mồi chạy liền mạch qua các thanh trong một lượt, như game thật.
         span = POINTER_HI - POINTER_LO
         phase = (self.speed * (when - self.slider_at) + span / 2) % (2 * span)
         return POINTER_LO + (phase if phase <= span else 2 * span - phase)
@@ -59,18 +65,17 @@ class FakeGame:
         age = now - self.since
         if self.state == "wait" and age > 2.0:
             self.set("reel", now)
-        elif self.state == "cool" and age > 0.6:
+        elif self.state == "cool" and age > FLASH_TIME:
             if self.shown >= self.sliders:
                 self.set("result", now)
             else:
                 self.set("slider", now)
-                self.slider_at = now
         elif self.state == "slider" and now - self.slider_at > 30:
             self.set("idle", now)
 
     def set(self, state, now):
         self.state, self.since = state, now
-        if state == "slider":
+        if state == "slider" and self.shown == 0:
             self.slider_at = now
 
     def image(self, now):
@@ -82,7 +87,8 @@ class FakeGame:
         if self.state == "reel":
             return self.reel
         if self.state == "cool":
-            return self.cool
+            age = now - self.since
+            return self.cool[0 if age < 0.13 else 1 if age < 0.20 else 2]
         if self.state == "result":
             return self.result
         zone = self.zones[(self.shown) % len(self.zones)]
@@ -153,8 +159,14 @@ class FakeAdb:
 
 
 def main() -> None:
+    global TAP_DELAY, SHOT_TIME, SHOT_AT
     speed = float(sys.argv[1]) if len(sys.argv) > 1 else 240.0
     sliders = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    if len(sys.argv) > 3:
+        TAP_DELAY = float(sys.argv[3])
+    if len(sys.argv) > 4:
+        SHOT_TIME = float(sys.argv[4])
+        SHOT_AT = 0.4 * SHOT_TIME
     game = FakeGame(speed, sliders)
     messages = []
 
@@ -164,10 +176,10 @@ def main() -> None:
 
     t0 = time.time()
     runner = Runner(FakeAdb(game), log, threading.Event(), casts=2, multiplier=1, learn=False)
-    # Game giả có độ trễ riêng, không phải độ lệch đo trên máy thật.
-    runner._latency = 0.22  # game giả nhận lệnh ngay
+    # Tool khởi đầu với độ trễ mặc định rồi tự dò độ trễ của game giả qua chữ nổ.
     stats = runner.run()
     print(f"bấm {game.taps} lần, trúng {game.hits}/{sliders * 2}; chi tiết (mồi, vùng, trúng): {game.log}")
+    print(f"độ trễ game giả {TAP_DELAY:.2f}s, tool dò được {runner._latency:.2f}s")
     print(f"thống kê: {stats.casts} lượt, {stats.caught} thành công, {stats.gold} Gold")
 
 

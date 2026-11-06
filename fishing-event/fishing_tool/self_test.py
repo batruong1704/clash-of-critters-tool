@@ -19,6 +19,7 @@ from fishing_tool.vision import (
     Templates,
     fish_tile_point,
     normalize,
+    read_flash,
     read_gold,
     read_multiplier,
     read_rods,
@@ -53,6 +54,9 @@ def _test_memory(check) -> None:
         off = Memory(path, enabled=False)
         off.record(0.9, True)
         check("nhớ: tắt học thì không ghi", len(Memory(path).taps), 10)
+        check("nhớ: chưa đo độ trễ máy", again.tap_delay(), None)
+        again.set_tap_delay(0.9)
+        check("nhớ: độ trễ máy kẹp trong 0,15–0,70 và đọc lại được", Memory(path).tap_delay(), 0.70)
 
     # Mồi chạy 200px/s từ đầu thanh. Bấm lúc t=1.0 thì mồi ở POINTER_LO+200. Vùng vàng 400-480 chứa mồi
     # khi L trong khoảng ngắn sau đó (rồi lại vào vùng sau khi nảy, ngoài lưới thử).
@@ -74,12 +78,12 @@ def _test_memory(check) -> None:
         GOLD_LOOK,
         HIT_SETTLE,
         RESULT_SAMPLES,
+        _flash_age,
         _hold_hit,
         _pick_gold,
         _pointer_at,
         _same_zone,
         _stop_gold_samples,
-        _wide_edge_lead,
         _zone_link,
     )
 
@@ -95,22 +99,79 @@ def _test_memory(check) -> None:
     check("hết giờ chờ dù không đo được lệch", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, None, 73), False)
     check("hai mép đổi thì là thanh mới", _zone_link((412, 521), (370, 480)), "thanh_moi")
     check("nội suy mồi giữa hai mẫu", _pointer_at([(0.0, 0.0), (0.4, 100.0)], 0.1), 25.0)
+    # Phiên 02:06 lượt 5 cú 1: ảnh trước cách 0,9s, ảnh sau là thanh mới đã bị lọc, chỉ còn ảnh cách 0,012s.
+    lone = [(82.11, 486.0), (82.77, 430.0), (83.43, 282.0), (84.339, 334.5)]
+    near = _pointer_at(lone, 84.351, 227.0)
+    check("ảnh sát giờ bấm tới thì chạy tiếp theo vận tốc", near is not None and abs(near - 337.2) < 0.5, True)
+    check("không có vận tốc mà ảnh gần như trùng giờ vẫn nhận", _pointer_at(lone, 84.351), 334.5)
+    check("không có vận tốc, ảnh cách 0,15s thì chịu", _pointer_at(lone, 84.49), None)
+    check("ảnh cách quá NEAR_SAMPLE thì chịu", _pointer_at(lone, 84.65, 227.0), None)
+    # Lượt 6 cú 4: hai ảnh kề cách 0,72s kẹp lấy giờ tới, ngưỡng cũ 0,70 bỏ qua.
+    pair = [(118.058, 266.5), (119.235, 416.5), (119.96, 307.0)]
+    got = _pointer_at(pair, 119.273, 224.0)
+    check("hai ảnh cách 0,72s vẫn nội suy", got is not None and abs(got - 410.8) < 0.5, True)
+    check("ảnh busy xen giữa (cách 1,3s) không nội suy", _pointer_at([(10.0, 300.0), (11.3, 420.0)], 10.65), None)
+    from fishing_tool.flow import _other_bar
+
+    check("mẫu sang thanh mới bị loại", _other_bar((322, 469), (322, 431), 305.0), True)
+    check("mẫu cùng thanh được giữ", _other_bar((368, 515), (368, 515), 440.0), False)
+    check("thiếu mốc thì coi như cùng thanh", _other_bar((None, None), (368, 515), 440.0), False)
+    check("ảnh busy không đọc được vùng (0, 0) thì giữ mẫu", _other_bar((368, 515), (0, 0), 440.0), False)
 
     import threading
 
     from fishing_tool.flow import Runner
+    from fishing_tool.vision import Scene, Slider
 
-    lead = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
-    slipped = {"err_px": -1.4, "t_lenh": 1.0, "tre": 0.30, "vung_lo": 253, "vung_hi": 326}
-    lead._nudge_from_miss(slipped)
-    check("trượt sát tâm lần đầu chưa bù trễ", lead._late_lead, 0.0)
-    lead._miss_streak = 1
-    lead._nudge_from_miss(slipped)
-    check("trượt sát tâm lần hai thì bù trễ", lead._late_lead, 0.1)
-    check("vùng rộng dính rìa muộn thì tăng bù", _wide_edge_lead(38, 200, 70, 147), 0.04)
-    check("trúng gần tâm thì không xê", _wide_edge_lead(8, 200, 70, 147), 0.0)
-    check("vùng hẹp không dùng bù rìa", _wide_edge_lead(38, 200, 30, 73), 0.0)
-    check("dính rìa sớm không tăng bù", _wide_edge_lead(-38, 200, 70, 147), 0.0)
+    check("vệt trắng mới nổ", _flash_age(0.41, 0), (0.0, 0.13))
+    check("vệt trắng đang tắt", _flash_age(0.16, 0), (0.10, 0.30))
+    check("chỉ còn chữ Great", _flash_age(0.12, 8000), (0.25, 0.90))
+    check("thanh thường không phải chữ nổ", _flash_age(0.12, 300), None)
+    check("máy có nền sáng thì vệt mờ chưa tính", _flash_age(0.16, 0, base=0.13), None)
+
+    learn = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
+    check("độ trễ mặc định 0,30s", learn._latency, 0.30)
+    learn._learn_delay(0.48, 0.60)
+    check("máy chậm: mỗi lần nhích tối đa 0,08s", learn._latency, 0.38)
+    learn._learn_delay(0.48, 0.60)
+    learn._learn_delay(0.48, 0.60)
+    check("máy chậm: dừng ở mép khoảng", learn._latency, 0.48)
+    learn._learn_delay(0.40, 0.55)
+    check("đang trong khoảng thì giữ", learn._latency, 0.48)
+    learn._learn_delay(0.10, 0.30)
+    check("thấy chữ sớm thì hạ xuống", learn._latency, 0.40)
+    check("độ trễ lệnh không tách vùng rộng hẹp", learn._command_latency(), 0.40)
+    slipped = {"err_px": -1.4, "t_lenh": 1.0, "tre": 0.40, "vung_lo": 300, "vung_hi": 336}
+    learn._nudge_from_miss(slipped)
+    check("trượt giữa vùng: dò muộn hơn trước", (learn._latency_nudge, learn._probe), (0.10, True))
+    learn._miss_streak = 1
+    learn._nudge_from_miss(slipped)
+    check("trượt lần hai: dò sớm hơn", learn._latency_nudge, -0.10)
+    learn._miss_streak = 2
+    learn._nudge_from_miss(slipped)
+    check("trượt lần ba: dò xa hơn", learn._latency_nudge, 0.20)
+    learn._pending_tap = {"time": 5.0, "total": 0.30, "width": 36, "speed": 240, "first": False}
+    learn._cast_tap_log = [dict(slipped, ket_qua_bam=None, tre=0.30, do=True, moc_lo=300, moc_hi=336, mau_tiep=[])]
+    learn._remember(True)
+    check("cú dò trúng thì độ trễ máy dời theo", learn._latency, 0.34)
+
+    # Ảnh canh lúc chữ nổ (0,34s sau lệnh) còn thấy thanh cũ, sau đó thanh đổi: cú bấm tới muộn hơn 0,34s.
+    late = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
+    late._tapped_zone = True
+    late._tap_at = 100.0
+    late._zone_anchor = (300, 410)
+    old_bar = Scene("slider", "purple", {"slider": Slider(300, 410, 350.0), "flash": (0.10, 0)})
+    check("thanh cũ chưa nổ chữ: chưa chốt", late._flash_check(old_bar, 100.2, 100.56), False)
+    check("ghi mốc cú bấm tới muộn hơn", late._flash_lo is not None and abs(late._flash_lo - 0.344) < 0.01, True)
+    late._on_hit()
+    check("trúng muộn thì tăng độ trễ máy", abs(late._latency - 0.364) < 0.01, True)
+    late._tapped_zone = True
+    late._tap_at = 200.0
+    burst = Scene("busy", "purple", {"slider": Slider(None, None, None), "flash": (0.42, 0)})
+    check("chữ nổ là trúng", late._flash_check(burst, 200.25, 200.61), True)
+    check("chữ nổ chốt cú bấm", late._tapped_zone, False)
+    check("độ trễ nằm trong khoảng chữ nổ", abs(late._latency - 0.364) < 0.01, True)
+
     edge = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
     edge._t0 = 0.0
     edge.tracker.add(0.8, 200)
@@ -137,7 +198,7 @@ def _test_memory(check) -> None:
     edge._note_after_tap(1.5, 340.0, (180, 320))
     check("ảnh chuyển cảnh ghi được mồi", edge._cast_tap_log[0]["mau_sau_moi"], 340.0)
     edge._remember(True)
-    check("trúng sát rìa thì lần sau bù trễ", edge._late_lead, 0.04)
+    check("chốt cú bấm xong ghi kết quả", edge._cast_tap_log[0]["ket_qua_bam"], "trung")
     check("chờ xác nhận khi mồi còn trong vùng", _hold_hit(11.2, 10.0, -8, 73), True)
     check("hết giờ chờ thì được gọi trượt", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, -8, 73), False)
     check("mồi ra khỏi vùng thì không chờ", _hold_hit(11.2, 10.0, -78, 36), False)
@@ -277,6 +338,10 @@ def main() -> int:
     slider = read_scene(frame(640), templates).detail["slider"]
     check("vùng vàng video 640", (slider.lo // 5 * 5, slider.hi // 5 * 5), (290, 435))
     print(f"     mồi ở {slider.pointer:.0f}")
+    check("thanh thường không có vệt trắng (video 640)", read_flash(frame(640))[0] < 0.14, True)
+    check("vệt trắng lúc mới nổ (video 667)", read_flash(frame(667))[0] >= 0.33, True)
+    check("vệt trắng lúc sắp tắt (video 672)", 0.14 <= read_scene(frame(672), templates).detail["flash"][0] < 0.22, True)
+    check("sau chữ nổ thanh lại thường (video 680)", read_flash(frame(680))[0] < 0.14, True)
 
     check("ô câu cá trên pinball", fish_tile_point(frame(215), templates) is not None, True)
     check("sân không có ô câu cá", fish_tile_point(frame(30), templates), None)
