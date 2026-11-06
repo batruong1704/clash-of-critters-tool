@@ -70,7 +70,7 @@ Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào vi
 
 - Độ trễ là khoảng từ lúc phát lệnh bấm tới lúc game nhận. Mặc định **0,15 giây** (`BASE_LATENCY`). Tool chỉ học từ cú **trúng**: lấy lúc mồi đi ngang giữa vùng, rồi lấy trung vị 40 cú trúng gần nhất. Kết quả bị chặn trong **0,10–0,18 giây**. Vùng rộng không dùng số này để phát lệnh: video 17:29 cho thấy số học được (0,10 giây) tới muộn, nên lệnh của vùng rộng tính với **0,24 giây**. Sau một cú trượt mà mồi vẫn nằm trong vùng, độ trễ của lần bấm kế trên cùng thanh được xê theo `err_px`, tối đa 0,08 giây và không quá khoảng 35% nửa vùng. Mồi đã ra khỏi vùng thì không xê: đó là sai pha, không phải độ trễ.
 - Cú trượt không đưa vào tính độ trễ. Lúc trượt gần như mọi độ trễ đều "khớp", trung vị bị kéo về 0 và cú bấm tới sau khi mồi đã ra khỏi vùng.
-- Số đang dùng hiện ở dòng đầu nhật ký. Dữ liệu ở `data/hoc.json` (tối đa 400 cú). Xóa file đó để học lại.
+- Số đang dùng hiện ở dòng đầu nhật ký. Dữ liệu ở `data/hoc.json` (tối đa 400 cú). Xóa file đó để học lại. `tools/sim_flow.py` không ghi file này.
 - `py -3 tools/phan_tich.py` chấm lại từng cú từ `logs/*-vet.txt`. Không tin dòng TRÚNG/TRƯỢT cũ trong file vết: bản trước có lúc báo trúng khi mồi chỉ che bớt vùng vàng. Thêm `--nhap` để dựng lại `data/hoc.json` từ các file vết.
 
 ### Gold
@@ -94,7 +94,10 @@ Rủi ro: game có thể coi đây là thao tác tự động và khóa tài kho
 
 ## Kiểm tra sau khi sửa
 
-Ảnh chụp, video demo và `self_test` nằm ở nhánh `dev`. Nhánh này chỉ giữ code chạy tool. Sau khi sửa, thử vài lượt trên emulator và xem `logs/*-vet.txt`.
+1. `py -3 -m fishing_tool.self_test` chạy trên ảnh và video có sẵn, không cần emulator. Phải ra `XONG`.
+2. `py -3 tools/check_predictor.py` kiểm bộ đoán vị trí mồi trên video.
+3. `py -3 tools/sim_flow.py 400 3` chạy vòng câu trên game giả (ảnh thật của video, mồi vẽ lại). Không đụng game.
+4. Cuối cùng thử trên emulator thật, vài lượt, xem `logs/*-vet.txt`.
 
 ## Thư mục
 
@@ -106,6 +109,8 @@ Rủi ro: game có thể coi đây là thao tác tự động và khóa tài kho
 | `fishing_tool/predictor.py` | Đoán vị trí mồi, chọn giờ bấm |
 | `fishing_tool/vision.py` | Nhận màn hình, đọc thanh trượt, đọc Gold, rod, hệ số |
 | `fishing_tool/device.py` | ADB: đo giờ chụp, bấm qua shell mở sẵn |
+| `fishing_tool/self_test.py` | Kiểm tra nhận màn trên ảnh có sẵn |
 | `data/templates/` | Ảnh mẫu: nút Pinball, nút Camp, ô Fishing Contest, viên hệ số |
 | `data/loai-ca/` | Ảnh từng loài, chia thư mục `do`, `vang`, `tim`, `xanh` |
-| `tools/` | `run_live.py`, `phan_tich.py` |
+| `tools/` | `sim_flow.py`, `check_predictor.py`, `run_live.py` |
+| `resource/` | Ảnh và video mô tả game |
