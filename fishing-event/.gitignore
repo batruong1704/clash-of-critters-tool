@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 logs/
-data/
+
+# File học độ trễ trên từng máy. Ảnh mẫu trong data/ phải đi cùng code.
+data/hoc.json
