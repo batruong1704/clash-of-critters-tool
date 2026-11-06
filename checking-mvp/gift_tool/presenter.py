@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from gift_tool.flow import LABELS, LOG_INDENT, MAX_GIFTS
@@ -25,7 +26,7 @@ from gift_tool.model import (
     parse_ids,
     scan_ids,
 )
-from gift_tool.view import MainView, fish_level
+from gift_tool.view import APP_VERSION, MainView, fish_level
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -52,6 +53,37 @@ def _one_line(text: str) -> str:
     return line[:160] if line else "git không trả lời"
 
 
+def _explain_failure(text: str) -> str:
+    """Đổi lời kỹ thuật thành câu người dùng đọc được. Nguyên văn vẫn ghi vào log."""
+    raw = text.lower()
+    if "would be overwritten" in raw or "local changes" in raw or "please commit" in raw:
+        return "Chưa tải được vì trong thư mục tool còn file đang sửa. Đóng tool, mở lại, rồi bấm Cập nhật."
+    if "not possible to fast-forward" in raw or "diverging" in raw:
+        return "Bản trên máy đã lệch với bản phát hành nên chưa tải đè được. Nhờ người cài tool xử lý."
+    if "index.lock" in raw:
+        return "Tool đang bận một việc khác. Đợi một lát rồi bấm Cập nhật lại."
+    if any(mark in raw for mark in ("could not resolve", "unable to access", "failed to connect", "timed out", "connection refused", "hết giờ")):
+        return "Không kết nối được. Kiểm tra mạng rồi bấm Cập nhật lại."
+    if any(mark in raw for mark in ("authentication", "permission denied", "403", "401")):
+        return "Máy này chưa được phép tải bản mới. Nhờ người cài tool kiểm tra lại."
+    return "Chưa tải được bản mới. Kiểm tra mạng rồi thử lại."
+
+
+def _log_update(message: str, detail: str = "") -> None:
+    """Ghi lần cập nhật. Dòng đầu là câu người dùng thấy, phần sau là lời kỹ thuật."""
+    try:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        body = message.rstrip()
+        extra = detail.strip()
+        if extra:
+            body = f"{body}\n{extra}"
+        with (LOGS / "cap-nhat.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"[{stamp}] {body}\n")
+    except OSError:
+        pass
+
+
 _PROGRESS_LINE = re.compile(
     r"(counting|compressing|receiving|resolving|unpacking)\s+(?:objects|deltas):\s+(\d+)%",
     re.IGNORECASE,
@@ -66,12 +98,12 @@ def _read_progress(line: str) -> tuple[int, str] | None:
     phase = match.group(1).lower()
     pct = int(match.group(2))
     if phase == "counting":
-        return 5 + pct * 15 // 100, "Đang chuẩn bị tải…"
+        return 5 + pct * 15 // 100, "Đang chuẩn bị…"
     if phase == "compressing":
-        return 20 + pct * 10 // 100, "Đang chuẩn bị tải…"
+        return 20 + pct * 10 // 100, "Đang chuẩn bị…"
     if phase == "receiving":
-        return 30 + pct * 60 // 100, "Đang tải code mới…"
-    return 90 + pct * 10 // 100, "Đang ghép file…"
+        return 30 + pct * 60 // 100, "Đang tải bản mới…"
+    return 90 + pct * 10 // 100, "Đang cài bản mới…"
 
 
 def _split_git_chunks(buf: bytes) -> tuple[bytes, list[str]]:
@@ -146,7 +178,7 @@ def _remote_sha(repo: Path, branch: str) -> tuple[str, str]:
         return "", _one_line(listed.stderr or listed.stdout)
     token = listed.stdout.split()
     if not token:
-        return "", f"GitHub không có nhánh {branch}."
+        return "", f"Không thấy bản phát hành trên nhánh {branch}."
     return token[0], ""
 
 
@@ -202,44 +234,63 @@ def _notes_between(repo: Path, old: str, new: str) -> str:
             blocks.append(block)
     if blocks:
         return "\n\n".join(blocks)
-    log = _git(repo, "log", "--pretty=format:%s", f"{old}..{new}")
-    subjects = [line.strip() for line in log.stdout.splitlines() if line.strip()]
-    return "\n".join(f"• {line}" for line in subjects[:12])
+    return "Đã cài bản mới."
+
+
+def _latest_message() -> str:
+    return f"Bạn đang dùng bản {APP_VERSION}. Đây là bản mới nhất."
 
 
 def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
-    """Kéo code mới nếu máy có Git và remote là GitHub. Không đụng cấu hình git."""
-    on_status("Đang kiểm tra GitHub…")
+    """Tải bản phát hành mới. Không đụng cấu hình git. Câu trả về là tiếng Việt cho người dùng."""
+    on_status("Đang kiểm tra bản mới…")
     if shutil.which("git") is None:
-        return "Máy chưa có Git nên không kéo code từ GitHub được.", ""
+        message = "Máy này chưa được cài đủ để cập nhật. Nhờ người thiết lập tool kiểm tra lại."
+        _log_update(message)
+        return message, ""
     if not (repo / ".git").exists():
-        return "Thư mục tool không phải repo Git.", ""
+        message = "Không tìm thấy dữ liệu bản cài nên chưa cập nhật được."
+        _log_update(message)
+        return message, ""
     url = _git(repo, "remote", "get-url", "origin")
     remote = url.stdout.strip().lower()
     if url.returncode != 0 or "github.com" not in remote:
-        return "Repo này chưa gắn remote GitHub.", ""
+        message = "Bản cài này chưa được nối tới nơi phát hành nên chưa cập nhật được."
+        _log_update(message, url.stderr or url.stdout)
+        return message, ""
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     local = _git(repo, "rev-parse", "HEAD").stdout.strip()
     if not branch or branch == "HEAD":
         branch = "main"
     sha, problem = _remote_sha(repo, branch)
     if not sha:
-        return f"Không kiểm tra được GitHub: {problem}", ""
+        message = "Không kết nối được để kiểm tra bản mới. Kiểm tra mạng rồi thử lại."
+        _log_update(message, problem)
+        return message, ""
     if sha == local:
-        return "Đã là bản mới nhất.", ""
+        message = _latest_message()
+        _log_update(message)
+        return message, ""
     known = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
     if known.returncode == 0 and _git(repo, "merge-base", "--is-ancestor", sha, "HEAD").returncode == 0:
-        return "Đã là bản mới nhất.", ""
-    on_status("Có bản mới. Đang tải…")
+        message = _latest_message()
+        _log_update(message)
+        return message, ""
+    on_status("Có bản mới. Đang tải về…")
     on_progress(0)
     code, text = _git_stream(repo, on_status, on_progress, "pull", "--ff-only", "--progress", "origin", branch)
     if code != 0:
-        return f"Không kéo được code: {_one_line(text)}", ""
+        message = _explain_failure(text)
+        _log_update(message, text or "không có lời trả về")
+        return message, ""
     on_progress(100)
     if "already up to date" in text.lower() or "already up-to-date" in text.lower():
-        return "Đã là bản mới nhất.", ""
+        message = _latest_message()
+        _log_update(message)
+        return message, ""
     new = _git(repo, "rev-parse", "HEAD").stdout.strip()
-    return "Đã kéo code mới.", _notes_between(repo, local, new)
+    _log_update(f"Đã tải bản mới {APP_VERSION}.")
+    return "Đã tải bản mới.", _notes_between(repo, local, new)
 
 
 def relaunch_app() -> None:
@@ -754,7 +805,7 @@ class Presenter:
             return
         self._updating = True
         self.view.set_update_busy(True)
-        dialog.set_status("Đang kiểm tra GitHub…")
+        dialog.set_status("Đang kiểm tra bản mới…")
         threading.Thread(target=self._update_from_github, args=(dialog,), daemon=True).start()
 
     def _update_from_github(self, dialog) -> None:
@@ -775,12 +826,13 @@ class Presenter:
         try:
             message, notes = pull_from_github(REPO, on_status, on_progress)
         except Exception as exc:
-            message, notes = f"Không cập nhật được: {exc}", ""
+            _log_update("Không cập nhật được.", str(exc))
+            message, notes = "Không cập nhật được. Hãy tắt tool rồi mở lại.", ""
 
         def done() -> None:
             self._updating = False
             self.view.set_update_busy(False)
-            if message.startswith("Đã kéo"):
+            if message.startswith("Đã tải"):
                 self._restart_with_notes(dialog, notes)
                 return
             if dialog.alive:
@@ -798,7 +850,7 @@ class Presenter:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(notes.strip(), encoding="utf-8")
             if dialog.alive:
-                dialog.set_status("Đã tải xong. Đang mở lại…")
+                dialog.set_status("Đã tải xong. Đang mở lại tool…")
                 dialog.set_progress(100)
                 self.view.root.update_idletasks()
             relaunch_app()
@@ -808,9 +860,10 @@ class Presenter:
             except OSError:
                 pass
             if dialog.alive:
-                dialog.set_status(f"Đã kéo code nhưng chưa mở lại được: {exc}")
+                dialog.set_status("Đã tải bản mới nhưng chưa mở lại được. Hãy tắt tool rồi mở lại.")
             else:
-                self.view.toast(f"Đã kéo code nhưng chưa mở lại được: {exc}")
+                self.view.toast("Đã tải bản mới nhưng chưa mở lại được. Hãy tắt tool rồi mở lại.")
+            _log_update("Chưa mở lại được sau khi tải.", str(exc))
             return
         self.view.root.destroy()
 

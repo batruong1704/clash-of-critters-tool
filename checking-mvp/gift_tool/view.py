@@ -23,7 +23,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.2"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -227,7 +227,7 @@ class UpdateDialog:
         self.heading.pack(fill="x")
         self.status = tk.Label(
             self.body,
-            text="Đang kiểm tra GitHub…",
+            text="Đang kiểm tra bản mới…",
             bg=colors["panel"],
             fg=colors["text"],
             font=UI_FONT,
@@ -1528,7 +1528,7 @@ class MainView:
         if current is not None and current.alive:
             current.lift()
             return current
-        dialog = NotesDialog(self, notes.strip() or "Đã kéo code mới.")
+        dialog = NotesDialog(self, notes.strip() or "Đã cài bản mới.")
         self._notes_dialog = dialog
         return dialog
 
