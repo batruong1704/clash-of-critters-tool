@@ -24,7 +24,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.8"
+APP_VERSION = "1.2.9"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -802,11 +802,14 @@ class MainView:
         self._auto_scroll = True
         self._view_name = "result"
         self._fish_hold = False
-        self._cast_after = None
+        self._clock_after = None
         self._cast_running = False
         self._cast_t0 = 0.0
         self._cast_iid = ""
-        self._cast_shown = "—"
+        self._cast_shown = ""
+        self._session_running = False
+        self._session_t0 = 0.0
+        self._total_live = False
 
         self.root.title("Auto fishing")
         self.root.minsize(860, 640)
@@ -923,6 +926,9 @@ class MainView:
         self.bar.bind("<Configure>", lambda _event: self._draw_bar())
         self.percent_label = tk.Label(progress, textvariable=self.percent_var, font=UI_FONT)
         self.percent_label.grid(row=0, column=2, sticky="e")
+        self.total_var = tk.StringVar(value="Tổng —")
+        self.total_label = tk.Label(progress, textvariable=self.total_var, font=("Segoe UI", 10, "bold"), anchor="e")
+        self.total_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
         self.step_label = tk.Label(self.main, textvariable=self.step_var, font=("Segoe UI", 9), anchor="w")
         self.step_label.grid(row=1, column=0, sticky="ew", padx=14, pady=(4, 0))
         self.hold_banner = tk.Label(
@@ -936,7 +942,7 @@ class MainView:
 
         self.tiles_row = tk.Frame(self.main)
         self.tiles_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(10, 0))
-        self.tile_order = ("Lượt", "Con này", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã tham gia", "Quà", "UID", "Pinball")
+        self.tile_order = ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã tham gia", "Quà", "UID", "Pinball")
         self.tiles = {}
         for index, name in enumerate(self.tile_order):
             self.tiles_row.columnconfigure(index, weight=1)
@@ -1141,7 +1147,7 @@ class MainView:
         self.help_btn.grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
         self.help_tip = tk.Label(
             page,
-            text="Hệ số xN tốn N rod mỗi lần quăng. Bấm Dừng khi đang câu thì câu nốt lượt đó rồi mới dừng. Hết lượt hoặc hết rod cũng dừng. Ô Con này đếm thời gian câu một con. Game hiện có đến x100.",
+            text="Hệ số xN tốn N rod mỗi lần quăng. Bấm Dừng khi đang câu thì câu nốt lượt đó rồi mới dừng. Hết lượt hoặc hết rod cũng dừng. Cột Thời gian đếm từng con. Thanh trên cùng là thời gian tổng. Game hiện có đến x100.",
             font=("Segoe UI", 9),
             wraplength=240,
             justify="left",
@@ -1191,7 +1197,7 @@ class MainView:
             "list": ("UID", "Kết quả", "Ghi chú"),
         }
         tiles = {
-            "fish": ("Lượt", "Con này", "Thành công", "Thất bại", "Gold", "Rod còn"),
+            "fish": ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn"),
             "rally": ("Đã tham gia",),
             "scan": ("Quà", "UID", "Pinball"),
             "list": ("Quà", "UID", "Pinball"),
@@ -1212,6 +1218,12 @@ class MainView:
         else:
             self.progress.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 0))
             self.step_label.grid_configure(pady=(4, 0))
+        if mode == "fish":
+            self.total_label.grid()
+            if not self._session_running:
+                self._set_total("Tổng —", False)
+        else:
+            self.total_label.grid_remove()
 
     def _mark_mode(self, mode: str) -> None:
         colors = self.colors
@@ -1237,7 +1249,7 @@ class MainView:
                 tone = "gold" if name == "Gold" else "text"
                 self._tile_tones[name] = tone
                 value.configure(
-                    text="—" if name in ("Rod còn", "Con này") else "0",
+                    text="—" if name == "Rod còn" else "0",
                     fg=self.colors[tone],
                     bg=self.colors["tile"],
                 )
@@ -1343,64 +1355,94 @@ class MainView:
         self.invoke(apply)
 
     def reset_cast_clock(self) -> None:
-        """Xóa đồng hồ trước khi bắt đầu một phiên câu."""
+        """Bắt đầu lại thời gian tổng của phiên câu. Đồng hồ từng con nằm ở bảng kết quả."""
 
         def apply() -> None:
-            self._stop_cast_tick()
+            self._cancel_clock()
+            self._cast_running = False
             self._cast_iid = ""
-            self._cast_shown = "—"
-            self._tile("Con này", "—", "text")
+            self._cast_shown = ""
+            self._session_running = True
+            self._session_t0 = time.perf_counter()
+            self._set_total("Tổng 0:00.0", True)
+            self._clock_after = self.root.after(100, self._clock_tick)
 
         self.invoke(apply)
 
     def start_cast_clock(self, iid: str) -> None:
-        """Đếm thời gian con cá đang câu, từ lúc quăng cần."""
+        """Đếm thời gian con cá đang câu, chỉ trên dòng kết quả."""
 
         def apply(iid: str = iid) -> None:
-            self._stop_cast_tick()
             self._cast_running = True
             self._cast_t0 = time.perf_counter()
             self._cast_iid = iid
-            self._show_cast_time(iid, "0:00.0")
-            self._cast_after = self.root.after(100, self._cast_tick)
+            self._cast_shown = "0:00.0"
+            if iid:
+                self.sheet.set_cell(iid, "Thời gian", "0:00.0")
+            if not self._session_running:
+                self._session_running = True
+                self._session_t0 = time.perf_counter()
+                self._arm_clock()
 
         self.invoke(apply)
 
     def stop_cast_clock(self, seconds: float, iid: str = "") -> None:
-        """Dừng đồng hồ và hiện đúng số giây tool đã đo cho lượt này."""
+        """Dừng đồng hồ của con này và ghi đúng số giây đã đo. Thời gian tổng vẫn chạy."""
 
         def apply(seconds: float = seconds, iid: str = iid) -> None:
-            self._stop_cast_tick()
-            self._show_cast_time(iid or self._cast_iid, format_duration(seconds))
+            target = iid or self._cast_iid
+            self._cast_running = False
+            text = format_duration(seconds)
+            self._cast_shown = text
+            if target:
+                self.sheet.set_cell(target, "Thời gian", text)
 
         self.invoke(apply)
 
     def halt_cast_clock(self) -> None:
-        """Ngừng nhịp khi phiên kết thúc. Giữ số đang hiện."""
+        """Ngừng cả phiên. Giữ thời gian tổng đang hiện."""
 
         def apply() -> None:
-            self._stop_cast_tick()
+            shown = self.total_var.get()
+            self._cast_running = False
+            self._session_running = False
+            self._cancel_clock()
+            self._set_total(shown or "Tổng —", False)
 
         self.invoke(apply)
 
-    def _stop_cast_tick(self) -> None:
-        self._cast_running = False
-        if self._cast_after is not None:
-            self.root.after_cancel(self._cast_after)
-            self._cast_after = None
+    def _cancel_clock(self) -> None:
+        if self._clock_after is not None:
+            self.root.after_cancel(self._clock_after)
+            self._clock_after = None
 
-    def _cast_tick(self) -> None:
-        if not self._cast_running or not self.root.winfo_exists():
+    def _arm_clock(self) -> None:
+        if self._clock_after is None:
+            self._clock_after = self.root.after(100, self._clock_tick)
+
+    def _clock_tick(self) -> None:
+        self._clock_after = None
+        if not self.root.winfo_exists():
             return
-        text = format_duration(time.perf_counter() - self._cast_t0)
-        self._show_cast_time(self._cast_iid, text)
-        self._cast_after = self.root.after(100, self._cast_tick)
+        if self._session_running:
+            self._set_total("Tổng " + format_duration(time.perf_counter() - self._session_t0), True)
+        if self._cast_running:
+            text = format_duration(time.perf_counter() - self._cast_t0)
+            self._cast_shown = text
+            if self._cast_iid:
+                self.sheet.set_cell(self._cast_iid, "Thời gian", text)
+        if self._session_running or self._cast_running:
+            self._arm_clock()
 
-    def _show_cast_time(self, iid: str, text: str) -> None:
-        self._cast_shown = text
-        self._tile("Con này", text, "acc")
-        if iid:
-            self.sheet.set_cell(iid, "Thời gian", text)
+    def _set_total(self, text: str, live: bool) -> None:
+        self._total_live = live
+        if self.total_var.get() != text:
+            self.total_var.set(text)
+        self._paint_total()
+
+    def _paint_total(self) -> None:
+        colors = self.colors
+        self.total_label.configure(bg=colors["panel"], fg=colors["acc"] if self._total_live else colors["mute"])
 
     def set_fish_hold(self, holding: bool) -> None:
         """Dải và nút giữ nguyên khi đã bấm Dừng nhưng lượt câu đang dở chưa xong."""
@@ -1918,6 +1960,7 @@ class MainView:
         self.hold_banner.configure(bg=hold_bg, fg=colors["warn"])
         self.progress_label.configure(bg=colors["panel"], fg=colors["text"])
         self.percent_label.configure(bg=colors["panel"], fg=colors["mute"])
+        self._paint_total()
         self.toast_label.configure(bg=colors["panel"], fg=colors["mute"])
         warn_bg = "#f8efe4" if self.theme_name == "light" else "#3d3218"
         self.warn_label.configure(bg=warn_bg, fg=colors["warn"])
