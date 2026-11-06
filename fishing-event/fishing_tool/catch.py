@@ -28,6 +28,8 @@ MIN_MARGIN = 0.035
 MAX_ITEM_COUNT = 999
 # Khung nhỏ hơn mức này chỉ ăn một mảng nền hoặc một mảnh trên mình cá.
 MIN_BOX = 32
+# Vật phẩm thứ hai (pinball, túi mồi) phải khớp chắc. Mảnh cá lệch chỗ không được ghép thêm.
+EXTRA_SCORE = 0.72
 # Vùng giữa màn, chỗ con cá hoặc vật phẩm hiện.
 SEARCH = (0.16, 0.26, 0.84, 0.64)
 
@@ -51,7 +53,7 @@ class Catch:
 
     @property
     def label(self) -> str:
-        if self.kind == "ca" or not self.count:
+        if self.kind == "nhieu" or self.kind == "ca" or not self.count:
             return self.name
         return f"x{_thousands(self.count)} {self.name}"
 
@@ -66,8 +68,21 @@ def _thousands(value: int) -> str:
 
 
 def tone_for(label: str) -> str:
-    """Màu chữ của một dòng kết quả. Không rõ thì giữ màu thành công."""
-    text = label.strip()
+    """Màu chữ của một dòng kết quả. Không rõ thì giữ màu thành công.
+
+    Nhiều vật phẩm trên một màn thì lấy phẩm cá nếu có, không thì phẩm của vật phẩm.
+    """
+    tones = [_tone_piece(piece) for piece in label.split(", ")]
+    fish = next((tone for tone in tones if tone not in ("trang", "ok")), "")
+    if fish:
+        return fish
+    if "trang" in tones:
+        return "trang"
+    return "ok"
+
+
+def _tone_piece(piece: str) -> str:
+    text = piece.strip()
     name = text.split(" ", 1)[1] if text.startswith("x") and " " in text else text
     for sprite in _book():
         if sprite.name == name:
@@ -90,7 +105,10 @@ def classify(img) -> Catch | None:
             continue
         rough.append((hit[0], scale, sprite, hit))
     rough.sort(key=lambda item: item[0], reverse=True)
-    for score, scale, sprite, hit in rough[:8]:
+    refine = rough[:8] + [item for item in rough[8:] if item[2].kind != "ca"]
+    refined = set()
+    for score, scale, sprite, hit in refine:
+        refined.add(id(sprite))
         best = hit
         if score >= 0.28:
             for delta in REFINE:
@@ -100,25 +118,83 @@ def classify(img) -> Catch | None:
         ox, oy, tw, th = best[1], best[2], best[3], best[4]
         ranked.append((best[0], sprite, round(ox / MATCH_ZOOM), round(oy / MATCH_ZOOM), round(tw / MATCH_ZOOM), round(th / MATCH_ZOOM)))
     for score, _scale, sprite, hit in rough[8:]:
+        if id(sprite) in refined:
+            continue
         ox, oy, tw, th = hit[1], hit[2], hit[3], hit[4]
         ranked.append((score, sprite, round(ox / MATCH_ZOOM), round(oy / MATCH_ZOOM), round(tw / MATCH_ZOOM), round(th / MATCH_ZOOM)))
     if not ranked:
         return None
     ranked.sort(key=lambda item: item[0], reverse=True)
-    score, sprite, ox, oy, tw, th = ranked[0]
-    rival = next((item[0] for item in ranked[1:] if item[1].name != sprite.name), 0.0)
-    if score < MIN_SCORE or score - rival < MIN_MARGIN:
+    kept = _keep_rewards(ranked)
+    if not kept:
         return None
+    catches = [_caught(frame, x0, y0, item) for item in sorted(kept, key=lambda item: item[2])]
+    if len(catches) == 1:
+        return catches[0]
+    fish = next((item for item in catches if item.kind == "ca"), None)
+    rarity = fish.rarity if fish is not None else catches[0].rarity
+    score = max(item.score for item in catches)
+    return Catch(", ".join(item.label for item in catches), "nhieu", rarity, None, score)
+
+
+def _caught(frame, x0: int, y0: int, item) -> Catch:
+    score, sprite, ox, oy, tw, th = item
     count = None
     if sprite.kind != "ca":
         count = _count_below(frame, x0 + ox, y0 + oy, tw, th)
     return Catch(sprite.name, sprite.kind, sprite.rarity, count, score)
 
 
+def _keep_rewards(ranked) -> list:
+    """Giữ các vật phẩm đứng chỗ khác nhau. Hai điểm sát nhau là cùng một icon."""
+    kept = []
+    for item in ranked:
+        score, sprite, ox, oy, tw, th = item
+        box = (ox, oy, tw, th)
+        if score < MIN_SCORE or any(_same_place(box, (other[2], other[3], other[4], other[5])) for other in kept):
+            continue
+        near = _rival(ranked, sprite.name, box, near=True)
+        far = _rival(ranked, sprite.name, box, near=False)
+        if score - near < MIN_MARGIN:
+            continue
+        if not kept and far >= MIN_SCORE and score - far < MIN_MARGIN and far < EXTRA_SCORE:
+            continue
+        if sprite.kind == "ca" and any(other[1].kind == "ca" for other in kept):
+            continue
+        if kept and score < EXTRA_SCORE:
+            continue
+        kept.append(item)
+    return kept
+
+
+def _rival(ranked, name: str, box, near: bool) -> float:
+    best = 0.0
+    for score, sprite, ox, oy, tw, th in ranked:
+        if sprite.name == name:
+            continue
+        same = _same_place(box, (ox, oy, tw, th))
+        if same == near:
+            best = max(best, score)
+    return best
+
+
+def _same_place(a, b) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    if abs((ax + aw / 2) - (bx + bw / 2)) < 0.45 * max(aw, bw) and abs((ay + ah / 2) - (by + bh / 2)) < 0.45 * max(ah, bh):
+        return True
+    x0, y0 = max(ax, bx), max(ay, by)
+    x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    inter = max(0, x1 - x0) * max(0, y1 - y0)
+    union = aw * ah + bw * bh - inter
+    return union > 0 and inter / union > 0.2
+
+
 def _coarse(view, sprite: Sprite):
     best = None
     chosen = None
-    for scale in COARSE:
+    scales = COARSE if sprite.kind == "ca" else COARSE + (1.0, 1.15)
+    for scale in scales:
         hit = _match_at(view, sprite, scale)
         if hit is not None and (best is None or hit[0] > best[0]):
             best = hit

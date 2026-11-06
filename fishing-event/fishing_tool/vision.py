@@ -217,7 +217,8 @@ def _read_digits(img, box, height_range, kind: str, rightmost: bool = False) -> 
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
         fill = (hsv[..., 0] >= 12) & (hsv[..., 0] <= 32) & (hsv[..., 1] >= 100) & (hsv[..., 2] >= 190)
     else:
-        fill = gray >= 185
+        # Quầng vàng của túi mồi cũng sáng, nhưng bão hòa. Chữ số thì trắng.
+        fill = (gray >= 185) & (cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[..., 1] <= 80)
     dark = (gray <= 90).astype(np.uint8)
     near = cv2.dilate(dark, np.ones((9, 9), np.uint8)) > 0
     mask = (fill & near).astype(np.uint8) * 255

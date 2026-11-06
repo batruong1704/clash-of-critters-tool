@@ -141,17 +141,17 @@ def _test_catch(check) -> None:
 
     cases = (
         ("7.", "Cá Mỏ Dài", "tim", None),
-        ("8.", "Cá Chó", "xanh", None),
+        ("8.", "Cá Chóa", "xanh", None),
     )
     for prefix, name, tone, _count in cases:
         hit = classify(_png(prefix))
         check(f"loài ảnh {prefix[0]}", (hit.label, hit.tone) if hit else None, (name, tone))
 
     logs = (
-        ("cau-ca-ketqua-1.png", "Cá Ngừ Xanh", "vang"),
-        ("cau-ca-ketqua-2.png", "Cá Nam Châm", "xanh"),
-        ("cau-ca-ketqua-6.png", "Cá Dẹt", "tim"),
-        ("cau-ca-ketqua-7.png", "Cá Dẹt", "tim"),
+        ("cau-ca-ketqua-1.png", "Sò", "xanh"),
+        ("cau-ca-ketqua-2.png", "Mực", "xanh"),
+        ("cau-ca-ketqua-6.png", "Cá Tráp", "xanh"),
+        ("cau-ca-ketqua-7.png", "Cá Dao", "vang"),
     )
     for filename, name, tone in logs:
         img = cv2.imdecode(np.fromfile(LOGS / filename, np.uint8), cv2.IMREAD_COLOR)
@@ -163,9 +163,11 @@ def _test_catch(check) -> None:
     check("kẹo", (candy.label, candy.count, candy.tone) if candy else None, ("x767 kẹo", 767, "trang"))
     pinball = classify(normalize(cv2.imdecode(np.fromfile(folder / "pinball.png", np.uint8), cv2.IMREAD_COLOR)))
     check("pinball", (pinball.label, pinball.count, pinball.tone) if pinball else None, ("x3 pinball", 3, "trang"))
+    both = classify(normalize(cv2.imdecode(np.fromfile(folder / "pinball-va-tui.png", np.uint8), cv2.IMREAD_COLOR)))
+    check("pinball và túi mồi", (both.label, both.tone) if both else None, ("x3 pinball, x1 túi mồi", "trang"))
     from fishing_tool.catch import tone_for
 
-    check("Cá Bốc Mùi phẩm đỏ", tone_for("Cá Bốc Mùi"), "do")
+    check("Cá Mập Địch phẩm đỏ", tone_for("Cá Mập Địch"), "do")
 
     from fishing_tool.catch import Catch
     from fishing_tool.flow import _choose_catch

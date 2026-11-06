@@ -33,8 +33,8 @@ Cá nhỏ chỉ cần bấm Reel it in là lên, không có thanh trượt. Cá 
 
 ## Kết quả
 
-- Cửa sổ có số lượt, số cá thành công, số lần thất bại, tổng Gold và rod còn lại. Bảng kết quả có cột Lượt (chữ đen khi giao diện sáng, chữ trắng khi giao diện tối), Kết quả (xanh lá khi thành công, đỏ khi thất bại), Phân loại (màu phẩm giữ nguyên: đỏ, xanh, tím, cam, trắng) và Gold (vàng). Kẹo và pinball nằm ở cột Phân loại, kèm số lượng, chữ trắng.
-- `logs/cau-ca-<giờ>.csv`: mỗi lượt một dòng (`luot`, `ket_qua`, `vang`, `loai`, `pham`, `so_lan_bam`, `giay`). `ket_qua` là `thanh_cong`, `that_bai` hoặc `khong_ro`. `loai` là tên cá, hoặc `x3 pinball` / `x3,125 kẹo`. `pham` là `do`, `xanh`, `tim`, `vang` với cá, và `trang` với kẹo cùng pinball.
+- Cửa sổ có số lượt, số cá thành công, số lần thất bại, tổng Gold và rod còn lại. Bảng kết quả có cột Lượt (chữ đen khi giao diện sáng, chữ trắng khi giao diện tối), Kết quả (xanh lá khi thành công, đỏ khi thất bại), Phân loại (màu phẩm giữ nguyên: đỏ, xanh, tím, cam, trắng) và Gold (vàng). Kẹo, pinball và túi mồi nằm ở cột Phân loại, kèm số lượng, chữ trắng. Một lượt có cả hai thì ghi chung, ví dụ `x3 pinball, x1 túi mồi`; nếu kèm cá thì chữ lấy màu của cá.
+- `logs/cau-ca-<giờ>.csv`: mỗi lượt một dòng (`luot`, `ket_qua`, `vang`, `loai`, `pham`, `so_lan_bam`, `giay`). `ket_qua` là `thanh_cong`, `that_bai` hoặc `khong_ro`. `loai` là tên cá, `x3 pinball`, `x3,125 kẹo`, `x1 túi mồi`, hoặc ghép chung như `x3 pinball, x1 túi mồi`. `pham` là `do`, `xanh`, `tim`, `vang` với cá, và `trang` với kẹo, pinball, túi mồi. Có cả cá lẫn vật phẩm thì `pham` theo cá.
 - `logs/cau-ca-<giờ>-vet.txt`: vết thời gian từng mẫu mồi và từng cú bấm. Dùng khi cần chỉnh lại độ trễ. Cuối mỗi lượt có dòng `lượt N: K lần bấm thanh trượt` và một dòng thông số cho từng lần.
 - `logs/cau-ca-<giờ>-bam.csv`: cùng nội dung, mỗi cú bấm một dòng để tính độ trễ. Lượt không có thanh trượt vẫn có một dòng `lan=0`. Cột giờ là `t_lenh` (lúc phát lệnh), `tu_quang` (kể từ lúc quăng), `tre` (độ trễ đang giả định), `cho` (lệnh cách ảnh cuối bao lâu), `chup_dau`/`chup_cuoi` (cửa sổ chụp ảnh cuối), `mau_sau_*` (mồi ở ảnh ngay sau lệnh). `thanh` là thanh thứ mấy trong lượt, `lan_tren_thanh` là lần bấm thứ mấy trên thanh đó. `ket_qua_bam` là `trung` hoặc `truot`. `err_px` là mồi lúc game nhận trừ tâm vùng đang nhắm (dương là lệch sang phải). Chưa có mẫu quanh lúc đó thì để trống.
 - Ảnh `logs/cau-ca-ketqua-N.png` (12 ảnh đầu mỗi lần chạy) để đối chiếu khi số Gold đọc sai.
@@ -111,6 +111,6 @@ Rủi ro: game có thể coi đây là thao tác tự động và khóa tài kho
 | `fishing_tool/device.py` | ADB: đo giờ chụp, bấm qua shell mở sẵn |
 | `fishing_tool/self_test.py` | Kiểm tra nhận màn trên ảnh có sẵn |
 | `templates/` ở thư mục gốc repo | Ảnh mẫu dùng chung: nút Pinball, nút Camp, ô Fishing Contest, viên hệ số |
-| `data/loai-ca/` | Ảnh từng loài, chia thư mục `do`, `vang`, `tim`, `xanh` |
+| `data/loai-ca/` | Ảnh từng loài, chia thư mục `do`, `vang`, `tim`, `xanh`. Kẹo, pinball và túi mồi để ngay trong thư mục này |
 | `tools/` | `sim_flow.py`, `check_predictor.py`, `run_live.py` |
 | `resource/` | Ảnh và video mô tả game |

@@ -1,7 +1,7 @@
 [
   {
-    "file": "do/Cá Bốc Mùi.png",
-    "name": "Cá Bốc Mùi",
+    "file": "do/Cá Mập Địch.png",
+    "name": "Cá Mập Địch",
     "kind": "ca",
     "rarity": "do"
   },
@@ -30,8 +30,8 @@
     "rarity": "vang"
   },
   {
-    "file": "vang/Cá Heo.png",
-    "name": "Cá Heo",
+    "file": "vang/Cá Lợn.png",
+    "name": "Cá Lợn",
     "kind": "ca",
     "rarity": "vang"
   },
@@ -156,8 +156,8 @@
     "rarity": "xanh"
   },
   {
-    "file": "xanh/Cá Chó.png",
-    "name": "Cá Chó",
+    "file": "xanh/Cá Chóa.png",
+    "name": "Cá Chóa",
     "kind": "ca",
     "rarity": "xanh"
   },
@@ -234,7 +234,7 @@
     "rarity": "xanh"
   },
   {
-    "file": "xanh/Ếch.png",
+    "file": "xanh/Ếch đâyyy.png",
     "name": "Ếch",
     "kind": "ca",
     "rarity": "xanh"
@@ -255,6 +255,18 @@
     "file": "pinball.png",
     "name": "pinball",
     "kind": "pinball",
+    "rarity": "trang"
+  },
+  {
+    "file": "pinball-man.png",
+    "name": "pinball",
+    "kind": "pinball",
+    "rarity": "trang"
+  },
+  {
+    "file": "tui-moi.png",
+    "name": "túi mồi",
+    "kind": "tui",
     "rarity": "trang"
   }
 ]
