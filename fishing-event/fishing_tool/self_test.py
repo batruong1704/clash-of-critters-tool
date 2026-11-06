@@ -79,6 +79,7 @@ def _test_memory(check) -> None:
         _pointer_at,
         _same_zone,
         _stop_gold_samples,
+        _wide_edge_lead,
         _zone_link,
     )
 
@@ -106,6 +107,37 @@ def _test_memory(check) -> None:
     lead._miss_streak = 1
     lead._nudge_from_miss(slipped)
     check("trượt sát tâm lần hai thì bù trễ", lead._late_lead, 0.1)
+    check("vùng rộng dính rìa muộn thì tăng bù", _wide_edge_lead(38, 200, 70, 147), 0.04)
+    check("trúng gần tâm thì không xê", _wide_edge_lead(8, 200, 70, 147), 0.0)
+    check("vùng hẹp không dùng bù rìa", _wide_edge_lead(38, 200, 30, 73), 0.0)
+    check("dính rìa sớm không tăng bù", _wide_edge_lead(-38, 200, 70, 147), 0.0)
+    edge = Runner(object(), lambda _text: None, threading.Event(), 1, learn=False)
+    edge._t0 = 0.0
+    edge.tracker.add(0.8, 200)
+    edge.tracker.add(1.5, 340)
+    edge._zone = (180, 320)
+    edge._pending_tap = {"time": 1.0, "total": 0.24, "width": 147, "speed": 200, "first": True}
+    edge._cast_tap_log = [
+        {
+            "ket_qua_bam": None,
+            "err_px": None,
+            "t_lenh": 1.0,
+            "tre": 0.24,
+            "vung_lo": 180,
+            "vung_hi": 320,
+            "moc_lo": 180,
+            "moc_hi": 320,
+            "mau_sau_t": None,
+            "mau_sau_moi": None,
+            "mau_sau_lo": None,
+            "mau_sau_hi": None,
+            "mau_tiep": [],
+        }
+    ]
+    edge._note_after_tap(1.5, 340.0, (180, 320))
+    check("ảnh chuyển cảnh ghi được mồi", edge._cast_tap_log[0]["mau_sau_moi"], 340.0)
+    edge._remember(True)
+    check("trúng sát rìa thì lần sau bù trễ", edge._late_lead, 0.04)
     check("chờ xác nhận khi mồi còn trong vùng", _hold_hit(11.2, 10.0, -8, 73), True)
     check("hết giờ chờ thì được gọi trượt", _hold_hit(10.0 + HIT_SETTLE + 0.05, 10.0, -8, 73), False)
     check("mồi ra khỏi vùng thì không chờ", _hold_hit(11.2, 10.0, -78, 36), False)

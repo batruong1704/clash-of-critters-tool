@@ -410,6 +410,15 @@ class Runner:
         self._pause(0.3)
 
     def _on_busy(self, img, scene, started, ended) -> None:
+        # Ảnh chuyển cảnh thường vẫn còn mồi dù mất vùng vàng. Ghi lại để biết cú vừa bấm rơi ở đâu.
+        slider = (scene.detail or {}).get("slider")
+        if slider is not None and slider.pointer is not None:
+            when = started + CAPTURE_FRACTION * (ended - started)
+            if slider.lo is not None and slider.hi is not None:
+                zone = (slider.lo, slider.hi)
+            else:
+                zone = self._zone or (0, 0)
+            self._note_after_tap(when, float(slider.pointer), zone)
         self._follow_pointer(img, started, ended)
         # Lưu vài ảnh để xem màn nào bị gọi là chuyển cảnh. Mỗi lần chạy tối đa 8 ảnh.
         if self._busy_saved < 8:
@@ -832,9 +841,15 @@ class Runner:
                 break
         ok = consistent_latencies(self.tracker, tap["time"], self._zone, hit) if self._zone is not None else None
         self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok, err)
-        if hit and err is not None and self._late_lead > 0:
+        if hit and err is not None:
             vel = self.tracker.velocity(tap["time"] + float(tap["total"]))
-            if vel is not None and abs(vel) >= 80 and err / vel < -0.06:
+            row = next(item for item in reversed(self._cast_tap_log) if item.get("ket_qua_bam") is not None)
+            half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
+            extra = _wide_edge_lead(err, vel or 0.0, half, float(tap.get("width") or 0))
+            if extra:
+                self._bump_late_lead(extra)
+                self._trace("trúng sát rìa phía muộn, tăng bù trễ")
+            elif vel is not None and abs(vel) >= 80 and err / vel < -0.06 and self._late_lead > 0:
                 self._bump_late_lead(-0.05)
                 self._trace("trúng sớm, giảm bù trễ")
         if self.memory.enabled:
@@ -1174,6 +1189,21 @@ def _num(value, spec: str) -> str:
     if value is None:
         return ""
     return format(value, spec)
+
+
+def _wide_edge_lead(err: float, vel: float, half: float, width: float) -> float:
+    """Bù thêm (giây) khi cú trúng vùng rộng dính rìa phía mồi đang chạy. 0 nếu còn gần tâm hoặc là vùng hẹp.
+
+    Vùng rộng đang tính độ trễ cố định. Cú trúng sát rìa không được tính là trượt nên bù cũ không tăng,
+    lần sau vẫn bấm đúng chỗ dính rìa đó.
+    """
+    if width < NARROW_ZONE or half <= 0 or abs(vel) < 80:
+        return 0.0
+    if abs(err) < max(24.0, 0.45 * half):
+        return 0.0
+    if err / vel > 0.04:
+        return 0.04
+    return 0.0
 
 
 def _hold_hit(now: float, tapped: float, err: float | None, half: float) -> bool:
