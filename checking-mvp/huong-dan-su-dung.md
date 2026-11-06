@@ -77,4 +77,6 @@ Nếu tool báo không thấy lại ô nhập UID, nó dừng để khỏi bấm
 
 ## Khi sửa xong code hoặc ảnh mẫu
 
-Tắt hẳn cửa sổ tool rồi mở lại `run.bat`. Cửa sổ đang mở vẫn giữ ảnh mẫu cũ trong bộ nhớ.
+Sửa code trên máy thì tắt cửa sổ rồi mở lại `run.bat`. Cửa sổ đang mở vẫn giữ ảnh mẫu cũ trong bộ nhớ.
+
+Nút **Cập nhật** trong Cài đặt kéo bản trên GitHub về rồi tự mở lại cửa sổ, nên không cần tắt tay sau khi bấm nút đó.

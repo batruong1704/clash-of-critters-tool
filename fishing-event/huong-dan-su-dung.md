@@ -41,7 +41,7 @@ Cá nhỏ chỉ cần bấm Reel it in là lên, không có thanh trượt. Cá 
 
 ## Ghi chú kỹ thuật
 
-Sửa code xong phải **đóng giao diện rồi mở lại**. Tiến trình đang chạy vẫn giữ bản đã nạp lúc mở.
+Sửa code trên máy xong phải **đóng giao diện rồi mở lại**. Tiến trình đang chạy vẫn giữ bản đã nạp lúc mở. Nút **Cập nhật** trong Cài đặt thì tự mở lại sau khi kéo bản mới.
 
 Không bấm vào emulator khi tool đang chạy. Một cú bấm thừa vào viên hệ số hoặc nút câu làm lệch cả lượt.
 

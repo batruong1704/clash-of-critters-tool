@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -241,6 +242,28 @@ def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
     return "Đã kéo code mới.", _notes_between(repo, local, new)
 
 
+def relaunch_app() -> None:
+    """Mở lại đúng Python đang chạy để nạp code vừa kéo. Tiến trình cũ thoát sau đó."""
+    main_py = Path(sys.argv[0]).resolve()
+    if main_py.name != "main.py":
+        main_py = Path(__file__).resolve().parents[1] / "main.py"
+    command = [sys.executable, str(main_py)]
+    cwd = str(main_py.parent)
+    if os.name != "nt":
+        subprocess.Popen(command, cwd=cwd, start_new_session=True, close_fds=True)
+        return
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(
+            command,
+            cwd=cwd,
+            creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
+            close_fds=True,
+        )
+    except OSError:
+        subprocess.Popen(command, cwd=cwd, creationflags=flags, close_fds=True)
+
+
 def caught_fish(message: str) -> tuple[str, str] | None:
     """Tên hiện trên bảng và màu chữ. None khi dòng không phải kết quả câu."""
     if not message.startswith("Câu được"):
@@ -311,6 +334,7 @@ class Presenter:
         self.view.bind_close(self._save_settings)
         self._ready_status()
         self.refresh_action()
+        self.view.root.after(200, self._open_saved_notes)
 
     def __getattr__(self, name: str):
         """Self-test vẫn đọc nút và trang trên cửa sổ qua App."""
@@ -756,19 +780,54 @@ class Presenter:
         def done() -> None:
             self._updating = False
             self.view.set_update_busy(False)
-            if message.startswith("Đã kéo") and notes:
-                if dialog.alive:
-                    dialog.close()
-                self.view.open_notes_dialog(notes)
+            if message.startswith("Đã kéo"):
+                self._restart_with_notes(dialog, notes)
                 return
             if dialog.alive:
                 dialog.set_status(message)
-                if dialog.showing_progress and message.startswith("Đã kéo"):
-                    dialog.set_progress(100)
             else:
                 self.view.toast(message)
 
         self.view.invoke(done)
+
+    def _restart_with_notes(self, dialog, notes: str) -> None:
+        """Ghi phần có gì mới, mở cửa sổ mới, rồi đóng cửa sổ đang giữ code cũ."""
+        self._save_settings()
+        path = LOGS / "ban-moi.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(notes.strip(), encoding="utf-8")
+            if dialog.alive:
+                dialog.set_status("Đã tải xong. Đang mở lại…")
+                dialog.set_progress(100)
+                self.view.root.update_idletasks()
+            relaunch_app()
+        except OSError as exc:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            if dialog.alive:
+                dialog.set_status(f"Đã kéo code nhưng chưa mở lại được: {exc}")
+            else:
+                self.view.toast(f"Đã kéo code nhưng chưa mở lại được: {exc}")
+            return
+        self.view.root.destroy()
+
+    def _open_saved_notes(self) -> None:
+        path = LOGS / "ban-moi.txt"
+        if not path.is_file():
+            return
+        try:
+            notes = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        if notes:
+            self.view.open_notes_dialog(notes)
 
     def _note_fish_row(self, message: str, caught: tuple[str, str] | None = None) -> None:
         if message.startswith("Lượt ") and "quăng" in message:

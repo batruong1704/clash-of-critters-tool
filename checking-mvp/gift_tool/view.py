@@ -384,7 +384,7 @@ class NotesDialog:
         self.heading.pack(fill="x")
         self.hint = tk.Label(
             self.body,
-            text="Tắt cửa sổ rồi mở lại để dùng bản mới.",
+            text="Cửa sổ này đang chạy bản vừa tải.",
             bg=colors["panel"],
             fg=colors["mute"],
             font=UI_FONT,
@@ -1130,6 +1130,13 @@ class MainView:
         self._show_tiles(tiles[mode])
         self.clear_results()
         self._mark_mode(mode)
+        # Rally không có mốc để thanh tiến độ chạy. Dòng trạng thái phía dưới vẫn hiện việc đang làm.
+        if mode == "rally":
+            self.progress.grid_remove()
+            self.step_label.grid_configure(pady=(14, 0))
+        else:
+            self.progress.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 0))
+            self.step_label.grid_configure(pady=(4, 0))
 
     def _mark_mode(self, mode: str) -> None:
         colors = self.colors
