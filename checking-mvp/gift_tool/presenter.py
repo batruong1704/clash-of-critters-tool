@@ -837,6 +837,8 @@ class Presenter:
                 return
             if dialog.alive:
                 dialog.set_status(message)
+                if message == _latest_message():
+                    dialog.offer_restart(self.restart_app)
             else:
                 self.view.toast(message)
 
@@ -865,6 +867,24 @@ class Presenter:
                 self.view.toast("Đã tải bản mới nhưng chưa mở lại được. Hãy tắt tool rồi mở lại.")
             _log_update("Chưa mở lại được sau khi tải.", str(exc))
             return
+        self.view.root.destroy()
+
+    def restart_app(self) -> None:
+        """Mở lại cửa sổ để nạp code đang có trên máy. Không tải gì từ nơi phát hành."""
+        if self._updating:
+            self.view.toast("Đang cập nhật…")
+            return
+        if self.running:
+            self.view.toast("Đang chạy, hãy dừng trước khi khởi động lại.")
+            return
+        self._save_settings()
+        try:
+            relaunch_app()
+        except OSError as exc:
+            _log_update("Chưa khởi động lại được.", str(exc))
+            self.view.toast("Chưa mở lại được. Hãy tắt tool rồi mở lại.")
+            return
+        _log_update("Khởi động lại để nạp code trên máy.")
         self.view.root.destroy()
 
     def _open_saved_notes(self) -> None:

@@ -23,7 +23,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -250,6 +250,15 @@ class UpdateDialog:
         )
         self.percent.pack(side="right", padx=(10, 0))
         self.bar.bind("<Configure>", lambda _event: self._draw())
+        self.restart_btn = tk.Button(
+            self.body,
+            text="Khởi động lại",
+            font=UI_FONT,
+            bd=0,
+            padx=12,
+            pady=8,
+            cursor="hand2",
+        )
         self.close_btn = tk.Button(
             self.body,
             text="Đóng",
@@ -287,6 +296,13 @@ class UpdateDialog:
             activeforeground=colors["acc_t"],
             highlightthickness=0,
         )
+        self.restart_btn.configure(
+            bg=colors["tile"],
+            fg=colors["text"],
+            activebackground=colors["tile"],
+            activeforeground=colors["text"],
+            highlightthickness=0,
+        )
         self._draw()
 
     def set_status(self, text: str) -> None:
@@ -308,6 +324,15 @@ class UpdateDialog:
         self._draw()
         if first:
             self._fit()
+
+    def offer_restart(self, command) -> None:
+        """Hiện nút mở lại khi bản trên máy đã trùng bản phát hành."""
+        if not self.alive or self.restart_btn.winfo_manager():
+            return
+        self.restart_btn.configure(command=command)
+        self.restart_btn.pack(fill="x", pady=(14, 0), before=self.close_btn)
+        self.close_btn.pack_configure(pady=(8, 0))
+        self._fit()
 
     def _draw(self) -> None:
         if not self.alive:
@@ -963,6 +988,7 @@ class MainView:
         self.open_log_btn = self._settings_action(body, "Mở thư mục log", self._open_log_folder)
         self.purge_btn = self._settings_action(body, "Xóa cache", self.purge_log)
         self.update_btn = self._settings_action(body, "Cập nhật", self._update_app)
+        self.restart_btn = self._settings_action(body, "Khởi động lại", self._restart_app)
         self._refresh_cache_label()
 
         self.settings_rule_bottom = self._settings_rule(menu)
@@ -1503,6 +1529,10 @@ class MainView:
         self._close_settings()
         self.presenter.update_from_github()
 
+    def _restart_app(self) -> None:
+        self._close_settings()
+        self.presenter.restart_app()
+
     def set_update_busy(self, busy: bool) -> None:
         self._update_busy = busy
 
@@ -1738,7 +1768,7 @@ class MainView:
                 selectcolor=colors["panel"],
                 highlightthickness=0,
             )
-        for button in (self.open_log_btn, self.purge_btn, self.update_btn):
+        for button in (self.open_log_btn, self.purge_btn, self.update_btn, self.restart_btn):
             button.configure(
                 bg=colors["panel"],
                 fg=colors["text"],
