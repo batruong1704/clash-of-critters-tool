@@ -21,6 +21,8 @@ from fishing_tool.vision import (
     BADGE,
     BUTTON,
     MULTIPLIERS,
+    POINTER_HI,
+    POINTER_LO,
     REF_H,
     REF_W,
     Scene,
@@ -1387,14 +1389,25 @@ def _pointer_at(pts: list[tuple[float, float]], arrival: float, velocity: float 
         t1, x1 = nearest
     elif abs(gap) <= NEAR_SAMPLE:
         if velocity is not None:
-            return float(nearest[1] + velocity * gap)
+            return _fold(nearest[1] + velocity * gap)
         # Không có vận tốc thì chỉ nhận khi ảnh gần như trùng giờ (0,03s × 230px/s ≈ 7px).
         return float(nearest[1]) if abs(gap) <= 0.03 else None
     else:
         return None
     if t1 == t0:
         return None
-    return float(nearest[1] + (x1 - x0) / (t1 - t0) * gap)
+    return _fold(nearest[1] + (x1 - x0) / (t1 - t0) * gap)
+
+
+def _fold(x: float) -> float:
+    """Kéo dài đường mồi qua đầu thanh thì nó nảy lại, không chạy tiếp ra ngoài.
+
+    Phiên 2026-11-07 02:43 cú 1: ảnh cuối mồi ở 528 đang đi sang phải, kéo thẳng 0,43s nữa ra 610 (ngoài thanh)
+    và ghi lệch +219px cho một cú trúng giữa vùng. Gấp lại ở 536 thì ra 462.
+    """
+    span = POINTER_HI - POINTER_LO
+    phase = (x - POINTER_LO) % (2 * span)
+    return float(POINTER_LO + (phase if phase <= span else 2 * span - phase))
 
 
 def _fmt_follow(items: list) -> str:

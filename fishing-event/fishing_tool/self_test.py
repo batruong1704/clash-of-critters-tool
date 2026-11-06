@@ -106,6 +106,10 @@ def _test_memory(check) -> None:
     check("không có vận tốc mà ảnh gần như trùng giờ vẫn nhận", _pointer_at(lone, 84.351), 334.5)
     check("không có vận tốc, ảnh cách 0,15s thì chịu", _pointer_at(lone, 84.49), None)
     check("ảnh cách quá NEAR_SAMPLE thì chịu", _pointer_at(lone, 84.65, 227.0), None)
+    # Phiên 02:43 cú 1: hai ảnh 464 → 528 đi sang phải, kéo thẳng 0,43s nữa ra 610. Mồi nảy ở 536 nên phải là 462.
+    bounce = [(9.90, 382.0), (10.24, 464.0), (10.58, 528.0)]
+    folded = _pointer_at(bounce, 11.01, -227.0)
+    check("kéo dài qua đầu thanh thì gấp lại", folded is not None and abs(folded - 462.0) < 2.0, True)
     # Lượt 6 cú 4: hai ảnh kề cách 0,72s kẹp lấy giờ tới, ngưỡng cũ 0,70 bỏ qua.
     pair = [(118.058, 266.5), (119.235, 416.5), (119.96, 307.0)]
     got = _pointer_at(pair, 119.273, 224.0)
