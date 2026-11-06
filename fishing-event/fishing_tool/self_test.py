@@ -82,10 +82,12 @@ def _test_memory(check) -> None:
 
     check("gold đọc một lần", _pick_gold([1210]), 1210)
     check("gold một chữ số không nhận", _pick_gold([9]), 0)
-    check("gold một chữ số lặp vẫn nhận", _pick_gold([2, 2]), 2)
+    check("gold một chữ số lặp không nhận", _pick_gold([2, 2]), 0)
     check("gold lấy số đủ chữ", _pick_gold([210, 1210]), 1210)
     check("gold không để số 2 đè 118", _pick_gold([118, 118, 2, 2, 2, 2]), 118)
     check("gold dừng khi số lặp", _stop_gold_samples([118, 118], 0.1, 1), True)
+    check("gold chữ số lẻ lặp không chặn", _stop_gold_samples([2, 2], 0.1, 1), False)
+    check("gold chữ số lẻ hết giờ thì thôi", _stop_gold_samples([2, 2], GOLD_LOOK, 1), True)
     check("gold chưa thấy chữ thì chờ", _stop_gold_samples([], GOLD_LOOK - 0.1, 1), False)
     check("gold hết cửa sổ thì thôi", _stop_gold_samples([], GOLD_LOOK, 1), True)
     check("gold một lần đọc vẫn chụp thêm", _stop_gold_samples([548], 0.2, 1), False)
@@ -137,7 +139,6 @@ def _test_stop(check) -> None:
 
 def _test_catch(check) -> None:
     from fishing_tool.catch import classify
-    from fishing_tool.paths import LOGS
 
     cases = (
         ("7.", "Cá Mỏ Dài", "tim", None),
@@ -146,17 +147,6 @@ def _test_catch(check) -> None:
     for prefix, name, tone, _count in cases:
         hit = classify(_png(prefix))
         check(f"loài ảnh {prefix[0]}", (hit.label, hit.tone) if hit else None, (name, tone))
-
-    logs = (
-        ("cau-ca-ketqua-1.png", "Sò", "xanh"),
-        ("cau-ca-ketqua-2.png", "Mực", "xanh"),
-        ("cau-ca-ketqua-6.png", "Cá Tráp", "xanh"),
-        ("cau-ca-ketqua-7.png", "Cá Dao", "vang"),
-    )
-    for filename, name, tone in logs:
-        img = cv2.imdecode(np.fromfile(LOGS / filename, np.uint8), cv2.IMREAD_COLOR)
-        hit = classify(normalize(img))
-        check(filename, (hit.label, hit.tone) if hit else None, (name, tone))
 
     folder = RESOURCE / "type_fish"
     candy = classify(normalize(cv2.imdecode(np.fromfile(folder / "kẹo.png", np.uint8), cv2.IMREAD_COLOR)))

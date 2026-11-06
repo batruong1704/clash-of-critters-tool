@@ -1061,10 +1061,14 @@ def _same_zone(new: tuple[int, int], known: tuple[int, int]) -> bool:
 
 
 def _stop_gold_samples(golds: list[int], elapsed: float, extra: int) -> bool:
-    """Hết cần chụp thêm. extra là số ảnh đã chụp sau ảnh kết quả đầu."""
-    if any(golds.count(value) >= 2 for value in set(golds)):
+    """Hết cần chụp thêm. extra là số ảnh đã chụp sau ảnh kết quả đầu.
+
+    Chữ số một mình (tia sáng, viền cá đọc thành 2) không được tính là đã thấy Gold.
+    """
+    trusted = [value for value in golds if value >= 10]
+    if any(trusted.count(value) >= 2 for value in set(trusted)):
         return True
-    if not golds and elapsed >= GOLD_LOOK:
+    if not trusted and elapsed >= GOLD_LOOK:
         return True
     return extra >= RESULT_SAMPLES
 
@@ -1108,14 +1112,10 @@ def _pick_gold(golds: list[int]) -> int:
     """Chọn số Gold từ vài ảnh kết quả.
 
     Số chỉ nằm trên ảnh đầu rồi biến, nên một lần đọc từ 10 trở lên vẫn nhận (1.210 đọc được một lần là thật).
-    Một chữ số lẻ (như 9 do tia sáng, hoặc mảnh đồng xu đọc thành 2) chỉ nhận khi lặp lại ở hai ảnh và không có số dài hơn.
+    Một chữ số lẻ không phải Gold: tia sáng hoặc viền cá trên thẻ vàng đọc thành 2, và hiệu ứng giữ nguyên nên số đó lặp ở hai ảnh.
     Số từ 10 trở lên thắng chữ số lẻ dù chữ số lẻ xuất hiện nhiều lần hơn: lượt +118 bị đọc thành [118, 118, 2, 2, 2, 2].
     """
-    if not golds:
-        return 0
     long = [value for value in golds if value >= 10]
-    pool = long or golds
-    best = max(set(pool), key=lambda value: (pool.count(value), value))
-    if pool.count(best) >= 2 or best >= 10:
-        return best
-    return 0
+    if not long:
+        return 0
+    return max(set(long), key=lambda value: (long.count(value), value))
