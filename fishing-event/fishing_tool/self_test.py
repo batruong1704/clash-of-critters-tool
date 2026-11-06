@@ -167,6 +167,17 @@ def _test_catch(check) -> None:
 
     check("Cá Bốc Mùi phẩm đỏ", tone_for("Cá Bốc Mùi"), "do")
 
+    from fishing_tool.catch import Catch
+    from fishing_tool.flow import _choose_catch
+
+    weak = Catch("Cá Pixel", "ca", "tim", None, 0.43)
+    candy = Catch("kẹo", "keo", "trang", 9721, 0.54)
+    card = Catch("Bạch Tuộc", "ca", "tim", None, 0.85)
+    whale = Catch("Cá Mập Voi", "ca", "vang", None, 0.67)
+    check("chốt thẻ cá, bỏ khung chuyển cảnh", _choose_catch([card, weak]).name, "Bạch Tuộc")
+    check("không nhận khớp dưới sàn", _choose_catch([weak, candy]), None)
+    check("thẻ cá điểm vừa vẫn nhận", _choose_catch([whale]).name, "Cá Mập Voi")
+
 
 def main() -> int:
     video = cv2.VideoCapture(str(VIDEO))

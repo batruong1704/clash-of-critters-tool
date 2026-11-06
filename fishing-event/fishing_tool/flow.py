@@ -1069,14 +1069,39 @@ def _stop_gold_samples(golds: list[int], elapsed: float, extra: int) -> bool:
     return extra >= RESULT_SAMPLES
 
 
+# Ảnh Great!/Cool!/Loading/tên cá vẫn khớp nhầm một loài, điểm đo được nằm dưới 0,55.
+# Thẻ cá đã hiện thì từ 0,67 trở lên. Ngưỡng này chỉ dùng khi chốt loài của một lượt.
+CATCH_FLOOR = 0.60
+# Đủ chắc thì không cần so thêm các ảnh còn lại.
+CATCH_SURE = 0.80
+
+
+def _choose_catch(catches: list):
+    """Chọn loài trong các kết quả đã so, theo thứ tự ảnh cuối đến ảnh đầu.
+
+    Ảnh cuối thường là thẻ cá đã đứng yên. Ảnh đầu hay còn chữ chuyển cảnh.
+    Khớp dưới CATCH_FLOOR bị bỏ. Gặp khớp từ CATCH_SURE thì dừng.
+    """
+    best = None
+    for catch in catches:
+        if catch is None or catch.score < CATCH_FLOOR:
+            continue
+        if best is None or catch.score > best.score:
+            best = catch
+        if best.score >= CATCH_SURE:
+            break
+    return best
+
+
 def _classify_frames(frames: list):
-    """Loài trên ảnh kết quả đã giữ. Ảnh sau chỉ dùng khi ảnh đầu không khớp."""
-    if not frames:
-        return None
-    catch = classify(frames[0])
-    if catch is None and len(frames) > 1:
-        catch = classify(frames[-1])
-    return catch
+    """Loài chắc nhất trên các ảnh kết quả đã giữ. Không chốt ảnh chuyển cảnh."""
+    found = []
+    for frame in reversed(frames):
+        found.append(classify(frame))
+        chosen = _choose_catch(found)
+        if chosen is not None and chosen.score >= CATCH_SURE:
+            return chosen
+    return _choose_catch(found)
 
 
 def _pick_gold(golds: list[int]) -> int:

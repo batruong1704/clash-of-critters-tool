@@ -23,6 +23,9 @@ REFINE = (-0.10, -0.05, 0.05, 0.10)
 MATCH_ZOOM = 0.34
 MIN_SCORE = 0.42
 MIN_MARGIN = 0.035
+# Số kẹo / pinball trên thẻ là số ngắn (x3, x767). Bảng điểm hai bên là hàng triệu,
+# đọc cụt thành x9.721 thì bỏ, chỉ giữ tên vật phẩm.
+MAX_ITEM_COUNT = 999
 # Khung nhỏ hơn mức này chỉ ăn một mảng nền hoặc một mảnh trên mình cá.
 MIN_BOX = 32
 # Vùng giữa màn, chỗ con cá hoặc vật phẩm hiện.
@@ -150,7 +153,10 @@ def _count_below(img, x: int, y: int, width: int, height: int) -> int | None:
         min(1.0, (cx + 110) / REF_W),
         min(1.0, (y + height + 56) / REF_H),
     )
-    return _read_digits(img, box, (0.022, 0.042), "white")
+    count = _read_digits(img, box, (0.022, 0.042), "white")
+    if count is None or count > MAX_ITEM_COUNT:
+        return None
+    return count
 
 
 def _book() -> tuple[Sprite, ...]:
