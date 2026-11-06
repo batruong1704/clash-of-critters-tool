@@ -6,8 +6,6 @@ REPO = ROOT.parent
 DATA = ROOT / "data"
 TEMPLATES = DATA / "templates"
 LOGS = ROOT / "logs"
-RESOURCE = ROOT / "resource"
-VIDEO = RESOURCE / "demo-video.mp4"
 
 # adb_client và hàm đọc chữ số dùng chung với tool nhận quà.
 _SHARED = REPO / "checking-mvp"

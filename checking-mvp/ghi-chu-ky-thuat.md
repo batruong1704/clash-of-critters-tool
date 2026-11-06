@@ -72,7 +72,7 @@ Quyết định:
 
 **Font.** Arial Bold đọc chữ **1** khoảng **0.56**, dưới ngưỡng, nên cấp có chữ 1 (131, 149, …) thành rỗng và tool vẫn Visit. Trên ảnh ADB 720×1280, chữ 9 cuối của `Lvl 299` cũng chỉ **0.637**. Malgun Bold khớp chữ trong game: chữ 1 khoảng **0.79**, chữ 9 khoảng **0.89**. Đừng đổi lại Arial, đừng cài Tesseract.
 
-Ảnh kiểm tra: `resource/3. nhập id và tìm kiếm.png` phải đọc **299**. `py -3 -m gift_tool.self_test` dừng nếu ra số khác.
+Ảnh kiểm tra cấp 299 và lệnh `self_test` nằm ở nhánh `dev`.
 
 ## Các màn hình game tool có thể gặp
 
@@ -145,10 +145,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `gift_tool/vision.py` | So ảnh mẫu, đọc cấp |
 | `gift_tool/adb_client.py` | Chụp và bấm |
 | `gift_tool/paths.py` | Đường dẫn thư mục |
-| `gift_tool/self_test.py` | Kiểm tra mẫu ảnh trên ảnh có sẵn |
 | `../templates/` | Ảnh mẫu nút, dùng chung. Tool nhận quà lấy qua `TEMPLATES` trong `paths.py` |
-| `resource/` | Ảnh chụp từng bước của game, dùng để cắt mẫu và chạy `self_test` |
-| `tools/build_templates.py` | Cắt mẫu từ `resource/` |
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |
 | `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
 | `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
@@ -186,9 +183,9 @@ Còn có thể làm: bỏ qua các khoảng nghỉ ngẫu nhiên (`nghỉ cố �
 
 ## Kiểm tra sau khi sửa
 
-1. `py -3 -m gift_tool.self_test` chạy trên ảnh có sẵn, không cần emulator. Dừng nếu cấp ảnh 3 không phải 299, hoặc một mẫu nhận nhầm màn.
-2. Sửa luồng bấm thì thử bằng emulator giả: một lớp có `screenshot()` và `tap()`, mỗi trạng thái là một ảnh thật trong `resource/`, chỉ đổi trạng thái khi bấm đúng chỗ. Cách này bắt được lỗi thứ tự bước mà không đụng game.
-3. Rồi mới thử trên emulator thật, bắt đầu từ từng màn trong bảng *Các màn hình game*. Dùng 1–2 UID đã biết kết quả. Ví dụ `42270085` là cấp 26, phải ra **false**.
+Ảnh chụp từng bước và `gift_tool/self_test.py` nằm ở nhánh `dev`. Nhánh này chỉ giữ code chạy tool.
+
+1. Thử trên emulator thật, bắt đầu từ từng màn trong bảng *Các màn hình game*. Dùng 1–2 UID đã biết kết quả. Ví dụ `42270085` là cấp 26, phải ra **false**.
 4. Tắt hẳn cửa sổ tool rồi mở lại `run.bat`. Cửa sổ đang mở vẫn chạy code cũ và giữ mẫu ảnh cũ trong bộ nhớ.
 
 Đừng bấm lên emulator khi tool đang quét. Hai bên tranh nhau bấm, UID đang xử lý có thể ghi lệch một dòng.
