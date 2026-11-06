@@ -151,7 +151,7 @@ Giới hạn **20** quà một lượt. Mỗi UID một dòng CSV trong `logs/ke
 | `tools/build_templates.py` | Cắt mẫu từ `resource/` |
 | `tools/profile_flow.py` | Chạy luồng thật với vài UID, chia thời gian theo chụp / bấm / so ảnh / nghỉ |
 | `logs/` | CSV và ảnh chụp thử. Git bỏ qua |
-| `versions/` | Mỗi lần push một file `X.Y.Z.md` ghi thay đổi |
+| `../versions/` | Thông báo phiên bản của cả tool, nằm ở gốc repo. Mỗi lần push một file `X.Y.Z.md` |
 | `requirements.txt` | `opencv-python-headless`, `numpy`, `pillow`, `sv-ttk` (giao diện Sun Valley cho Tkinter, `gift_tool/view.py`) |
 
 Python đang dùng là 3.13 (`py -3`). Thư viện đã cài cho bản Python đó.
@@ -199,7 +199,7 @@ Repo git nằm ở **`check_mvp_tool/`**, không phải thư mục cha `my-tool/
 
 `.gitignore` bỏ qua `__pycache__/`, `*.pyc`, `logs/` và `list_id.txt` (UID cá nhân). Các file này từng bị commit và đã gỡ khỏi git ở commit `82f2887`. Lịch sử cũ vẫn còn chúng.
 
-Mỗi lần push có một file trong `versions/`, tên `X.Y.Z.md`, bắt đầu từ `1.0.0`. Số cuối chạy 0 đến 9, quá thì tăng số giữa: `1.0.9` sang `1.1.0`. Cách làm nằm trong skill `ghi-log-phien-ban` (`.cursor/skills/`).
+Mỗi lần push có một file trong `versions/` ở gốc repo, tên `X.Y.Z.md`, bắt đầu từ `1.0.0`. Số cuối chạy 0 đến 9, quá thì tăng số giữa: `1.0.9` sang `1.1.0`. Cách làm nằm trong skill `ghi-log-phien-ban` (`.cursor/skills/`).
 
 ## Rủi ro
 

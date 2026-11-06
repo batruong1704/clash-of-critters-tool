@@ -217,7 +217,7 @@ def _notes_between(repo: Path, old: str, new: str) -> str:
     """Những thay đổi vừa kéo về. Ưu tiên file phiên bản, không có thì lấy câu mô tả commit."""
     if not old or not new or old == new:
         return ""
-    listed = _git(repo, "diff", "--name-only", "--diff-filter=AM", f"{old}..{new}", "--", "checking-mvp/versions")
+    listed = _git(repo, "diff", "--name-only", "--diff-filter=AM", f"{old}..{new}", "--", "versions")
     paths = []
     for rel in listed.stdout.splitlines():
         path = repo / rel.strip()

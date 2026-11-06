@@ -16,8 +16,8 @@ Nếu người dùng đã viết nội dung, dùng đúng ý họ. Nếu họ kh
 ## Trước khi commit
 
 1. Đọc diff sắp đẩy (`git diff` và `git diff --cached`, cộng commit chưa có trên `origin/main`).
-2. Nếu diff đã có đúng một file `checking-mvp/versions/<phiên bản>.md` mới và `APP_VERSION` trong `checking-mvp/gift_tool/view.py` khớp tên file đó, dùng file ấy. Không tạo thêm phiên bản.
-3. Nếu chưa có, tăng `APP_VERSION` một bậc vá (x.y.Z) và tạo `checking-mvp/versions/<APP_VERSION>.md`. Chỉ tăng bậc giữa (x.Y.0) khi lần này thêm chức năng người dùng bấm được.
+2. Nếu diff đã có đúng một file `versions/<phiên bản>.md` mới ở gốc repo và `APP_VERSION` trong `checking-mvp/gift_tool/view.py` khớp tên file đó, dùng file ấy. Không tạo thêm phiên bản.
+3. Nếu chưa có, tăng `APP_VERSION` một bậc vá (x.y.Z) và tạo `versions/<APP_VERSION>.md` ở gốc repo, ngoài checking-mvp. Chỉ tăng bậc giữa (x.Y.0) khi lần này thêm chức năng người dùng bấm được.
 4. Gộp file phiên bản và `APP_VERSION` vào cùng commit sẽ push. Không push khi thiếu thông báo.
 
 ## Cách viết
