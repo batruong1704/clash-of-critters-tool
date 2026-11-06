@@ -379,6 +379,7 @@ class Presenter:
         self.model = ToolModel()
         self._status_step = "Sẵn sàng"
         self._status_stats = [f"Dừng sau {MAX_GIFTS} quà"]
+        self._fish_timing = False
         self._settings_path = LOGS / "cua-so.json"
         self._loading = True
         self.view = MainView(
@@ -535,6 +536,8 @@ class Presenter:
         self.view.set_fish_multiplier(text)
         self._save_settings()
         self.stop.clear()
+        self._fish_timing = False
+        self.view.reset_cast_clock()
         self.view.clear_overview()
         self.view.clear_detail()
         self._lock()
@@ -661,6 +664,11 @@ class Presenter:
                     self._status(step)
 
             def show(stats) -> None:
+                if stats.timing:
+                    self._fish_timing = True
+                elif self._fish_timing:
+                    self._fish_timing = False
+                    self.view.stop_cast_clock(stats.seconds, getattr(self, "_fish_iid", ""))
                 rods = "?" if stats.rods is None else stats.rods
                 self._status(
                     self._status_step,
@@ -681,6 +689,7 @@ class Presenter:
             self._status("Dừng vì lỗi")
             self.view.toast("Dừng vì lỗi.")
         finally:
+            self.view.halt_cast_clock()
             self._unlock()
 
     def _capture_only(self) -> None:
@@ -918,18 +927,24 @@ class Presenter:
         if message.startswith("Lượt ") and "quăng" in message:
             number = message.split(":", 1)[0].split()[1].split("/")[0]
             self._fish_turn = number
-            self._fish_iid = self.view.add_result((number, "Đang chạy…", "", ""))
+            self._fish_iid = self.view.add_result((number, "Đang chạy…", "", "", ""))
+            self.view.start_cast_clock(self._fish_iid)
         elif caught is not None:
             gold = "–"
             if "+" in message and "Gold" in message:
                 gold = "+" + message.split("+", 1)[1].split()[0].rstrip(".")
             label, tone = caught
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thành công", label, gold), tone)
+            turn = getattr(self, "_fish_turn", "")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Thành công", "", label, gold), tone)
         elif message.startswith("Đang tính toán kết quả"):
             turn = getattr(self, "_fish_turn", "")
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Đang tính toán kết quả", "…", "…"), "run")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Đang tính toán kết quả", "", "…", "…"), "run")
         elif message.startswith("Thất bại"):
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (getattr(self, "_fish_turn", ""), "Thất bại", "–", "–"), "fail")
+            turn = getattr(self, "_fish_turn", "")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Thất bại", "", "–", "–"), "fail")
+        elif message.startswith("Không thấy màn kết quả"):
+            turn = getattr(self, "_fish_turn", "")
+            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Không rõ", "", "–", "–"), "warn")
 
     def _note_gift_row(self, message: str) -> None:
         if self.mode == "fish":

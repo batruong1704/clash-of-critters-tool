@@ -109,6 +109,8 @@ class Stats:
     gold: int = 0
     taps: int = 0
     rods: int | None = None
+    timing: bool = False
+    seconds: float = 0.0
     rows: list = field(default_factory=list)
 
 
@@ -276,6 +278,7 @@ class Runner:
                 self.stats.casts += 1
                 self._cast_open = True
                 self._cast_started = time.time()
+                self._begin_cast_clock()
                 self._cast_taps = 0
                 self._prepare_cast_taps()
                 self._fished = False
@@ -354,6 +357,7 @@ class Runner:
             self._seen_gold.clear()
             self._cast_retries = 0
             self._cast_started = time.time()
+            self._begin_cast_clock()
             self._cast_taps = 0
             self._prepare_cast_taps()
             self._reset_slider()
@@ -707,6 +711,8 @@ class Runner:
         elif outcome == "that_bai":
             s.failed += 1
         seconds = time.time() - self._cast_started
+        s.seconds = seconds
+        s.timing = False
         label = catch.label if catch is not None else ""
         rarity = catch.rarity if catch is not None else ""
         if self._writer is not None:
@@ -714,6 +720,11 @@ class Runner:
         self._flush_cast_taps(outcome)
         self._cast_open = False
         self.on_stats(s)
+
+    def _begin_cast_clock(self) -> None:
+        """Bắt đầu đếm thời gian của con cá đang câu."""
+        self.stats.timing = True
+        self.stats.seconds = 0.0
 
     def _on_hit(self) -> None:
         if self._tapped_zone:

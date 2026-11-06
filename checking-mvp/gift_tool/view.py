@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 import winreg
@@ -23,7 +24,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -89,6 +90,15 @@ def _format_size(size: int) -> str:
     else:
         number, unit = size / (1024 * 1024), "MB"
     return f"{number:.1f} {unit}".replace(".", ",")
+
+
+def format_duration(seconds: float) -> str:
+    """Đồng hồ một lượt câu, dạng 0:12.4."""
+    total = int(round(max(0.0, float(seconds)) * 10))
+    minutes, tenths = divmod(total, 600)
+    secs, tenth = divmod(tenths, 10)
+    return f"{minutes}:{secs:02d}.{tenth}"
+
 
 LIGHT = {
     "bg": "#f3f4f6",
@@ -524,8 +534,9 @@ _COLUMN_WEIGHT = {
     "Lượt": 8,
     "Lần": 8,
     "UID": 16,
-    "Kết quả": 18,
-    "Phân loại": 28,
+    "Kết quả": 16,
+    "Thời gian": 12,
+    "Phân loại": 26,
     "Gold": 12,
     "Ghi chú": 28,
 }
@@ -557,6 +568,8 @@ def result_cell_colors(title: str, value: str, tone: str, colors: dict[str, str]
             chip = "#3f4654" if theme_name == "dark" else "#1f2937"
             return "#ffffff", chip
         return colors[tone], ""
+    if title == "Thời gian":
+        return (colors["mute"] if blank else colors["acc"]), ""
     if title == "Gold":
         return (colors["mute"] if blank else colors["gold"]), ""
     if title == "Ghi chú" and tone == "ok":
@@ -645,9 +658,39 @@ class ResultBoard:
         row = self._by_id.get(iid)
         if row is None:
             return
-        row["values"] = values
+        row["values"] = self._keep_time(row["values"], values)
         row["tone"] = tone
         self.redraw()
+
+    def set_cell(self, iid: str, title: str, value: str) -> None:
+        row = self._by_id.get(iid)
+        if row is None or title not in self.headers:
+            return
+        index = self.headers.index(title)
+        values = list(row["values"])
+        while len(values) <= index:
+            values.append("")
+        if values[index] == value:
+            return
+        values[index] = value
+        row["values"] = tuple(values)
+        self.redraw()
+
+    def _keep_time(self, old: tuple[str, ...], new: tuple[str, ...]) -> tuple[str, ...]:
+        """Ô thời gian trống thì giữ số đồng hồ đang chạy, kẻo dòng kết quả xóa mất."""
+        if "Thời gian" not in self.headers:
+            return new
+        index = self.headers.index("Thời gian")
+        values = list(new)
+        while len(values) <= index:
+            values.append("")
+        previous = old[index] if index < len(old) else ""
+        if not values[index].strip() and previous.strip():
+            values[index] = previous
+        width = len(self.headers)
+        if len(values) < width:
+            values.extend([""] * (width - len(values)))
+        return tuple(values[:width])
 
     def redraw(self) -> None:
         if self._drawing:
@@ -759,6 +802,11 @@ class MainView:
         self._auto_scroll = True
         self._view_name = "result"
         self._fish_hold = False
+        self._cast_after = None
+        self._cast_running = False
+        self._cast_t0 = 0.0
+        self._cast_iid = ""
+        self._cast_shown = "—"
 
         self.root.title("Auto fishing")
         self.root.minsize(860, 640)
@@ -888,7 +936,7 @@ class MainView:
 
         self.tiles_row = tk.Frame(self.main)
         self.tiles_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(10, 0))
-        self.tile_order = ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã tham gia", "Quà", "UID", "Pinball")
+        self.tile_order = ("Lượt", "Con này", "Thành công", "Thất bại", "Gold", "Rod còn", "Đã tham gia", "Quà", "UID", "Pinball")
         self.tiles = {}
         for index, name in enumerate(self.tile_order):
             self.tiles_row.columnconfigure(index, weight=1)
@@ -1093,7 +1141,7 @@ class MainView:
         self.help_btn.grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
         self.help_tip = tk.Label(
             page,
-            text="Hệ số xN tốn N rod mỗi lần quăng. Bấm Dừng khi đang câu thì câu nốt lượt đó rồi mới dừng. Hết lượt hoặc hết rod cũng dừng. Game hiện có đến x100.",
+            text="Hệ số xN tốn N rod mỗi lần quăng. Bấm Dừng khi đang câu thì câu nốt lượt đó rồi mới dừng. Hết lượt hoặc hết rod cũng dừng. Ô Con này đếm thời gian câu một con. Game hiện có đến x100.",
             font=("Segoe UI", 9),
             wraplength=240,
             justify="left",
@@ -1137,13 +1185,13 @@ class MainView:
         titles = {"fish": "Tự câu cá", "rally": "Tham gia rally", "scan": "Quét ID", "list": "Nhận quà"}
         hints = {"fish": FISH_HINT, "rally": RALLY_HINT, "scan": SCAN_HINT, "list": GIFT_HINT}
         columns = {
-            "fish": ("Lượt", "Kết quả", "Phân loại", "Gold"),
+            "fish": ("Lượt", "Kết quả", "Thời gian", "Phân loại", "Gold"),
             "rally": ("Lần", "Kết quả"),
             "scan": ("UID", "Kết quả", "Ghi chú"),
             "list": ("UID", "Kết quả", "Ghi chú"),
         }
         tiles = {
-            "fish": ("Lượt", "Thành công", "Thất bại", "Gold", "Rod còn"),
+            "fish": ("Lượt", "Con này", "Thành công", "Thất bại", "Gold", "Rod còn"),
             "rally": ("Đã tham gia",),
             "scan": ("Quà", "UID", "Pinball"),
             "list": ("Quà", "UID", "Pinball"),
@@ -1189,7 +1237,7 @@ class MainView:
                 tone = "gold" if name == "Gold" else "text"
                 self._tile_tones[name] = tone
                 value.configure(
-                    text="—" if name == "Rod còn" else "0",
+                    text="—" if name in ("Rod còn", "Con này") else "0",
                     fg=self.colors[tone],
                     bg=self.colors["tile"],
                 )
@@ -1293,6 +1341,66 @@ class MainView:
                 self._set_bar(progress[2], progress[0], progress[1])
 
         self.invoke(apply)
+
+    def reset_cast_clock(self) -> None:
+        """Xóa đồng hồ trước khi bắt đầu một phiên câu."""
+
+        def apply() -> None:
+            self._stop_cast_tick()
+            self._cast_iid = ""
+            self._cast_shown = "—"
+            self._tile("Con này", "—", "text")
+
+        self.invoke(apply)
+
+    def start_cast_clock(self, iid: str) -> None:
+        """Đếm thời gian con cá đang câu, từ lúc quăng cần."""
+
+        def apply(iid: str = iid) -> None:
+            self._stop_cast_tick()
+            self._cast_running = True
+            self._cast_t0 = time.perf_counter()
+            self._cast_iid = iid
+            self._show_cast_time(iid, "0:00.0")
+            self._cast_after = self.root.after(100, self._cast_tick)
+
+        self.invoke(apply)
+
+    def stop_cast_clock(self, seconds: float, iid: str = "") -> None:
+        """Dừng đồng hồ và hiện đúng số giây tool đã đo cho lượt này."""
+
+        def apply(seconds: float = seconds, iid: str = iid) -> None:
+            self._stop_cast_tick()
+            self._show_cast_time(iid or self._cast_iid, format_duration(seconds))
+
+        self.invoke(apply)
+
+    def halt_cast_clock(self) -> None:
+        """Ngừng nhịp khi phiên kết thúc. Giữ số đang hiện."""
+
+        def apply() -> None:
+            self._stop_cast_tick()
+
+        self.invoke(apply)
+
+    def _stop_cast_tick(self) -> None:
+        self._cast_running = False
+        if self._cast_after is not None:
+            self.root.after_cancel(self._cast_after)
+            self._cast_after = None
+
+    def _cast_tick(self) -> None:
+        if not self._cast_running or not self.root.winfo_exists():
+            return
+        text = format_duration(time.perf_counter() - self._cast_t0)
+        self._show_cast_time(self._cast_iid, text)
+        self._cast_after = self.root.after(100, self._cast_tick)
+
+    def _show_cast_time(self, iid: str, text: str) -> None:
+        self._cast_shown = text
+        self._tile("Con này", text, "acc")
+        if iid:
+            self.sheet.set_cell(iid, "Thời gian", text)
 
     def set_fish_hold(self, holding: bool) -> None:
         """Dải và nút giữ nguyên khi đã bấm Dừng nhưng lượt câu đang dở chưa xong."""
