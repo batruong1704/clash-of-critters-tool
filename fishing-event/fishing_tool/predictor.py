@@ -15,9 +15,31 @@ SPEED_MIN = 80.0
 SPEED_MAX = 900.0
 SPEED_STEP = 3.0
 PHASE_STEP = 3.0
+# Vùng game 147 và 110. Ảnh đọc lệch vài px (109 vẫn là thanh 110) nên lấy từ 100.
+# Thanh 73 và 36 ở dưới mức này, giữ 40% giữa.
+WIDE_ZONE = 100.0
+# Chừa từng này px mỗi mép vùng rộng. 20px ở 230px/s là khoảng 0,09s, đủ cho giờ chụp lệch.
+EDGE_MARGIN = 20.0
 # Sai số mẫu cho phép (px) để coi là khớp. Giờ chụp lệch khoảng 0.1 giây là đã lệch 25–50px.
 FIT_TOLERANCE = 40.0
 OUTLIER_CAP = 120.0
+
+
+def aim_radius(width: float, measured: float | None = None) -> float:
+    """Bán kính quanh tâm (px) mà cú bấm được phép rơi vào.
+
+    Vùng rộng nhắm 55% nửa vùng: game ăn khoảng 60% nửa vùng, chừa phần còn lại cho sai số dự đoán.
+    Trần chừa 20px mỗi mép siết thêm khi thanh không quá rộng. Bán kính học từ vùng hẹp không kéo
+    cửa sổ này hẹp lại, vì số đó đo lúc tool chỉ nhắm 40% giữa.
+    Vùng hẹp giữ 40% giữa, và không nhắm rộng hơn bán kính đã đo nếu có.
+    """
+    half = width / 2
+    if width >= WIDE_ZONE:
+        return min(half - EDGE_MARGIN, half * 0.55)
+    visual = half * 0.40
+    if measured is None:
+        return visual
+    return min(visual, measured)
 
 
 def _triangle(unfolded: np.ndarray, span: float, lo: float) -> np.ndarray:
@@ -114,20 +136,18 @@ class Tracker:
         return mean, rms
 
     def plan(self, now: float, latency: float, zone: tuple[float, float], horizon: float = 2.4, eat: float | None = None):
-        """Giờ phát lệnh bấm (time.time) để mồi vào giữa đúng vùng này. None khi chưa có mô hình.
+        """Giờ phát lệnh bấm (time.time) để mồi vào gần tâm vùng này. None khi chưa có mô hình.
 
-        Mỗi thanh trong một lượt hẹp hơn thanh trước. Sai số dự đoán không nhỏ theo vùng, nên không lấy
-        một độ lệch trung bình rồi cộng vào vùng hẹp: vùng sau sẽ bị bấm sát mép. Chỉ bấm khi mồi được
-        dự đoán nằm trong 40% giữa của vùng đang thấy. `eat` là bán kính đo được từ các cú đã chấm
-        (px quanh tâm). Có số này thì không nhắm rộng hơn mức đó, và cũng không rộng hơn 40% nhìn thấy.
+        Trong cửa sổ ăn, vẫn chọn lúc mồi gần tâm nhất. Vùng rộng mở cửa sổ tới 55% nửa vùng
+        (game ăn khoảng 60%), nên lượt mồi đi gần giữa cũng bấm được, không phải đợi vòng sau.
+        Vùng hẹp giữ 40% giữa. `eat` là bán kính đo được từ các cú đã chấm (px quanh tâm).
         """
         if self.fit() is None:
             return None
         center = (zone[0] + zone[1]) / 2
         width = zone[1] - zone[0]
         steps = np.arange(0.02, horizon, 0.01)
-        visual = width / 2 * 0.40
-        eat = visual if eat is None else min(visual, eat)
+        eat = aim_radius(width, eat)
         xs = np.array([self.position(now + step + latency) for step in steps])
         dist = np.abs(xs - center)
         inside = dist <= eat

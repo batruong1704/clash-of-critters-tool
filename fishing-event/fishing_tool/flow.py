@@ -16,7 +16,7 @@ from fishing_tool.catch import classify
 from fishing_tool.device import FishAdb
 from fishing_tool.memory import BIAS_MAX, BIAS_MIN, DELAY_MAX, DELAY_MIN, Memory, consistent_latencies
 from fishing_tool.paths import LOGS
-from fishing_tool.predictor import Tracker
+from fishing_tool.predictor import WIDE_ZONE, Tracker, aim_radius
 from fishing_tool.vision import (
     BADGE,
     BUTTON,
@@ -79,9 +79,11 @@ FLASH_TRUSTED = 3
 # Cửa sổ còn xa hơn REFINE_HORIZON thì chụp thêm, tính từ lúc quyết định chứ không từ lúc bắt đầu chụp.
 # Tính từ lúc chụp sẽ trừ oan ~0,3s và bỏ cả cửa sổ sắp tới. Lượt 6 lúc 17:16 đứng 12s ở thanh 73px vì vậy.
 # Trượt thì lấy ảnh mới tính lại, không xê ±0,03s (mới được khoảng 7px).
+# Vùng rộng mà đường đã khớp: cửa sổ trong SCHEDULE_HORIZON thì ngủ tới giờ bấm. Chụp thêm một ảnh
+# (~0,47s) nuốt cửa sổ rồi phải đợi mồi quay lại, khoảng 1–2 giây.
 NARROW_ZONE = 120
 # Vùng rộng khoảng 147px. Ba ảnh cùng một chiều là đủ vận tốc và pha.
-# Cửa sổ còn xa hơn 0,70s thì chụp tiếp để chỉnh pha, không ngủ đến lúc bấm.
+# Đường đã khớp và cửa sổ còn trong 1,20s thì ngủ tới giờ bấm. Xa hơn thì chụp tiếp.
 WIDE_MIN_SAMPLES = 4
 WIDE_FIT_RMS = 16.0
 # Vùng rộng: ba ảnh khớp lệch ≤ 8px là bấm được, dù ba ảnh chưa đi một chiều (cú nảy nằm trong đó).
@@ -89,6 +91,7 @@ WIDE_FIT_RMS = 16.0
 WIDE_TIGHT_SAMPLES = 3
 WIDE_TIGHT_RMS = 8.0
 REFINE_HORIZON = 0.70
+SCHEDULE_HORIZON = 1.20
 MIN_SAMPLES_BEFORE_TAP = 5
 MAX_SAMPLES_BEFORE_TAP = 7
 ZONE_SHIFT = 12
@@ -809,10 +812,17 @@ class Runner:
         if due is None:
             # Trong 2.4s tới không có lúc nào mồi chắc chắn nằm trong vùng ăn thật. Chờ mẫu mới rồi tính lại.
             return
-        # Còn xa thì chụp thêm. Đoạn mồi chạy về là một đoạn thẳng sạch để chỉnh pha rồi mới bấm.
-        if due - now > REFINE_HORIZON:
+        # Vùng rộng, đường đã khớp: ngủ tới giờ bấm. Chụp thêm sẽ lỡ đúng lượt mồi đang chạy về.
+        width = aim[1] - aim[0]
+        matched = (
+            width >= WIDE_ZONE
+            and fit_now is not None
+            and fit_now[2] <= WIDE_FIT_RMS
+            and self.tracker.confident()
+        )
+        if due - now > (SCHEDULE_HORIZON if matched else REFINE_HORIZON):
             return
-        fit = self.tracker.fit()
+        fit = fit_now
         self._pending_tap = {
             "total": latency,
             "width": int(aim[1] - aim[0]),
@@ -824,8 +834,7 @@ class Runner:
         tapped = time.time()
         self._pending_tap["time"] = tapped
         row = self._tap_row(tapped, latency, offset, aim, fit)
-        visual = (aim[1] - aim[0]) / 2 * 0.40
-        eat = visual if measured is None else min(visual, measured)
+        eat = aim_radius(aim[1] - aim[0], measured)
         vel = self.tracker.velocity(tapped + latency)
         anchor = self._zone_anchor or (int(aim[0]), int(aim[1]))
         grown = self._zone or anchor

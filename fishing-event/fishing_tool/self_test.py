@@ -38,7 +38,14 @@ def _test_memory(check) -> None:
     from pathlib import Path
 
     from fishing_tool.memory import Memory, consistent_latencies
-    from fishing_tool.predictor import Tracker
+    from fishing_tool.predictor import Tracker, aim_radius
+
+    check("vùng 147 nhắm 55% nửa vùng", aim_radius(147), 147 / 2 * 0.55)
+    check("vùng 109 vẫn tính là thanh rộng", aim_radius(109), 109 / 2 * 0.55)
+    check("vùng 73 giữ 40% giữa", aim_radius(73), 73 / 2 * 0.40)
+    check("vùng 36 giữ 40% giữa", aim_radius(36), 36 / 2 * 0.40)
+    check("vùng hẹp không rộng hơn mức đã đo", aim_radius(36, 5), 5.0)
+    check("vùng rộng không bị mức đo hẹp kéo lại", aim_radius(147, 12), 147 / 2 * 0.55)
 
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "hoc.json"
