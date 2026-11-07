@@ -237,6 +237,10 @@ class Runner:
         self._trace_file = None
         self._t0 = time.time()
         self._last_kind = ""
+        self._fired_reel = False
+        self._stream_off = False
+        self._stream_decided = False
+        self._stream_times: list[float] = []
         self._busy_saved = 0
         self._result_saved = 0
         self._dismiss_count = 0
@@ -344,10 +348,18 @@ class Runner:
                 if not self.quick:
                     self._sleep_until(self._flash_due)
                 self._flash_due = None
-            img, started, ended = self.adb.timed_screenshot()
-            self._shot_dur += 0.3 * ((ended - started) - self._shot_dur)
+            self._fired_reel = False
+            img, started, ended = self._capture()
             img = normalize(img)
             scene = read_scene(img, self.templates)
+            if scene.kind == "reel" and time.time() - self._reel_tap >= 0.9:
+                # Bấm trước khi ghi log và trước khi tắt luồng chụp. Thanh vàng chỉ còn hơn 2 giây.
+                self.adb.tap_fast(*BUTTON_XY)
+                self._reel_tap = time.time()
+                self._reset_slider()
+                self._fired_reel = True
+            if self._last_kind == "wait" and scene.kind != "wait":
+                self._close_bite()
             self._track_unknown(scene, img)
             if scene.kind != self._last_kind:
                 self._trace(f"màn {scene.kind} (chụp {started - self._t0:.2f}-{ended - self._t0:.2f}s)")
@@ -381,6 +393,46 @@ class Runner:
             if scene.kind != "timesup":
                 self._timesup_since = None
             getattr(self, f"_on_{scene.kind}")(img, scene, started, ended)
+
+    def _capture(self):
+        """Ảnh kế. Đang chờ cá cắn thì lấy từ luồng screencap, để khung thấy bảng Reel về trong khoảng 0,25s."""
+        if self._last_kind != "wait":
+            self._close_bite()
+        elif not self._stream_off and hasattr(self.adb, "bite_frame"):
+            got = self.adb.bite_frame()
+            if got is None:
+                self._stream_off = True
+                self._stream_decided = True
+                self._close_bite()
+                self._trace("chụp liên tục dừng, dùng chụp thường")
+            else:
+                img, started, ended = got
+                self._note_stream(ended - started)
+                return img, started, ended
+        img, started, ended = self.adb.timed_screenshot()
+        self._shot_dur += 0.3 * ((ended - started) - self._shot_dur)
+        return img, started, ended
+
+    def _note_stream(self, dur: float) -> None:
+        """Tắt luồng nếu ba khung sau khung mở máy không nhanh hơn ảnh thường. Khung đầu gồm lúc mở lệnh."""
+        if self._stream_decided:
+            return
+        self._stream_times.append(dur)
+        if len(self._stream_times) < 4:
+            return
+        self._stream_decided = True
+        mid = sorted(self._stream_times[1:4])[1]
+        if stream_is_slower(self._stream_times, self._shot_dur):
+            self._stream_off = True
+            self._close_bite()
+            self._trace(f"chụp liên tục {mid:.2f}s không nhanh hơn chụp thường {self._shot_dur:.2f}s")
+            return
+        self._trace(f"chụp liên tục {mid:.2f}s")
+
+    def _close_bite(self) -> None:
+        close = getattr(self.adb, "close_bite", None)
+        if close is not None:
+            close()
 
     # ----- từng màn -----
 
@@ -459,18 +511,21 @@ class Runner:
         elif now - self._wait_since > WAIT_WARN:
             self.log("Chờ cá cắn quá lâu. Vẫn tiếp tục chờ.")
             self._wait_since = now
-        self._pause(0.1)
 
     def _on_reel(self, img, scene, started, ended) -> None:
+        if self._fired_reel:
+            self.log("Cá cắn. Bấm Reel it in.")
+            self._pause(0.3)
+            return
         now = time.time()
         if now - self._reel_tap < 0.9:
             self._follow_pointer(img, started, ended)
             self._pause(0.1)
             return
-        self.log("Cá cắn. Bấm Reel it in.")
         self.adb.tap_fast(*BUTTON_XY)
         self._reel_tap = time.time()
         self._reset_slider()
+        self.log("Cá cắn. Bấm Reel it in.")
         self._pause(0.3)
 
     def _on_busy(self, img, scene, started, ended) -> None:
@@ -1363,6 +1418,14 @@ class Runner:
             if time.time() - self._settle_since < STOP_SETTLE:
                 return
         raise Stopped()
+
+
+def stream_is_slower(samples: list[float], normal: float) -> bool:
+    """Ba khung đều (bỏ khung mở máy) không nhanh hơn một ảnh chụp thường ít nhất 0,05s."""
+    if len(samples) < 4:
+        return False
+    mid = sorted(samples[1:4])[1]
+    return mid >= normal - 0.05
 
 
 def _num(value, spec: str) -> str:

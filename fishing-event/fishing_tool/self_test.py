@@ -378,6 +378,70 @@ def _test_catch(check) -> None:
     check("thẻ cá điểm vừa vẫn nhận", _choose_catch([whale]).name, "Cá Mập Voi")
 
 
+def _test_reel_watch(check) -> None:
+    import struct
+    import threading
+    import time
+
+    from fishing_tool.device import decode_screencap
+    from fishing_tool.flow import Runner, stream_is_slower
+    from fishing_tool.memory import Memory
+
+    raw = struct.pack("<IIII", 2, 2, 1, 0) + bytes([10, 20, 30, 255]) * 4
+    image = decode_screencap(raw)
+    check("screencap thô ra BGR", None if image is None else tuple(int(v) for v in image[0, 0]), (30, 20, 10))
+    check("screencap thô hỏng đầu khung thì bỏ", decode_screencap(b"x" * 20), None)
+    check("luồng nhanh giữ khi đều 0,25s", stream_is_slower([0.80, 0.24, 0.25, 0.26], 0.45), False)
+    check("khung mở máy chậm không kéo theo", stream_is_slower([0.90, 0.22, 0.24, 0.23], 0.50), False)
+    check("luồng không nhanh hơn thì tắt", stream_is_slower([0.60, 0.44, 0.46, 0.45], 0.45), True)
+    check("chưa đủ 4 khung thì chưa tắt", stream_is_slower([0.50, 0.50], 0.45), False)
+
+    class Stub:
+        def __init__(self):
+            self.fast = 0
+            self.slow = 0
+            self.closed = 0
+            self.taps: list[tuple[int, int]] = []
+
+        def bite_frame(self):
+            self.fast += 1
+            now = time.time()
+            return np.zeros((1280, 720, 3), np.uint8), now, now + 0.02
+
+        def timed_screenshot(self):
+            self.slow += 1
+            now = time.time()
+            return np.zeros((1280, 720, 3), np.uint8), now, now + 0.20
+
+        def close_bite(self):
+            self.closed += 1
+
+        def tap_fast(self, x, y):
+            self.taps.append((x, y))
+
+        def tap(self, x, y):
+            self.tap_fast(x, y)
+
+        def close(self):
+            pass
+
+    stub = Stub()
+    runner = Runner(stub, lambda _message: None, threading.Event(), 1, learn=False, memory=Memory(enabled=False))
+    runner._last_kind = "idle"
+    runner._capture()
+    before = runner._shot_dur
+    runner._last_kind = "wait"
+    runner._capture()
+    check("đang chờ thì lấy luồng nhanh, không kéo giờ chụp thường", (stub.fast, stub.slow, runner._shot_dur == before), (1, 1, True))
+    runner._stream_off = True
+    runner._capture()
+    check("luồng tắt thì chờ cá cắn dùng ảnh thường", stub.slow, 2)
+    runner.quick = True
+    runner._fired_reel = True
+    runner._on_reel(np.zeros((8, 8, 3), np.uint8), None, 0, 0)
+    check("đã bấm Reel ở vòng chụp thì không bấm lần nữa", stub.taps, [])
+
+
 def main() -> int:
     video = cv2.VideoCapture(str(VIDEO))
 
@@ -462,6 +526,7 @@ def main() -> int:
     _test_catch(check)
     _test_memory(check)
     _test_stop(check)
+    _test_reel_watch(check)
 
     print("XONG" if failed == 0 else f"{failed} mục lỗi")
     return 1 if failed else 0
