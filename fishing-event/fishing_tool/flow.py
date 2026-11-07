@@ -59,13 +59,22 @@ HIT_SETTLE = 1.70
 # Tool dò nó từ chính chữ nổ: sau cú bấm, chụp đúng lúc chữ dự kiến nổ; thấy thì kẹp độ trễ theo độ sáng của vệt,
 # chưa thấy mà sau đó vẫn trúng thì cú bấm tới muộn hơn lúc chụp. Nhớ qua các phiên. Chưa đo thì dùng số này.
 BASE_LATENCY = 0.30
-# Vệt trắng kéo dài khoảng 0,27s. Chụp sau lúc dự kiến nổ chừng này để rơi vào lúc vệt còn sáng nhất.
-FLASH_AIM = 0.04
+# Vệt trắng kéo dài khoảng 0,27s rồi thanh mới hiện: sáng đều 0,10s đầu, tụt hẳn ở khung thứ tư (0,10–0,13s),
+# rồi mờ tới khi tắt. Chụp canh đúng mép tụt đó: ảnh còn sáng đều là cú bấm tới muộn hơn tool tưởng, ảnh đã tụt là
+# tới sớm hơn. Canh vào giữa đoạn sáng đều (0,04s) thì ảnh nào cũng sáng như nhau, không phân biệt được 0,25 với 0,33
+# (mô phỏng 7/11: độ trễ trôi dần 0,30 → 0,26 trong khi máy 0,29).
+FLASH_SHOW = 0.27
+FLASH_AIM = 0.09
 # Quá khoảng này sau lệnh thì chữ nổ (nếu có) đã tắt, không dùng ảnh để đo độ trễ nữa.
 FLASH_WAIT = 1.50
 FLASH_TEXT_MIN = 2500
 # Mỗi lần học chỉ dịch độ trễ tối đa chừng này, để một ảnh lệch giờ không kéo cả máy đi.
 DELAY_STEP = 0.08
+# Gom chừng này khoảng chữ nổ gần nhất rồi nhắm vào giữa phần giao của chúng. Một khoảng rộng 0,13s; đứng ở mép
+# khoảng là lệch tới 0,04s ≈ 9px, đủ trượt vùng 36px (phiên 13:43: giao 0,21–0,27 mà tool giữ 0,28).
+BRACKET_KEEP = 8
+# Thấy chữ nổ từng này lần thì độ trễ coi như chắc; trượt sát tâm sau đó không đem độ trễ ra dò nữa.
+FLASH_TRUSTED = 3
 # Cửa sổ còn xa hơn REFINE_HORIZON thì chụp thêm, tính từ lúc quyết định chứ không từ lúc bắt đầu chụp.
 # Tính từ lúc chụp sẽ trừ oan ~0,3s và bỏ cả cửa sổ sắp tới. Lượt 6 lúc 17:16 đứng 12s ở thanh 73px vì vậy.
 # Trượt thì lấy ảnh mới tính lại, không xê ±0,03s (mới được khoảng 7px).
@@ -188,8 +197,13 @@ class Runner:
         self._flash_due: float | None = None
         # Ảnh sau lệnh bấm còn thấy thanh cũ mà chưa nổ chữ: cú bấm tới muộn hơn mốc này (giây sau lệnh).
         self._flash_lo: float | None = None
+        # Ảnh sau lệnh bấm đã thấy thanh mới: cú bấm tới sớm hơn mốc này.
+        self._flash_hi: float | None = None
         # Vệt trắng của thanh lúc bình thường trên máy này (0,08–0,13 tùy máy). Chữ nổ phải sáng hơn hẳn mức này.
         self._white_base = 0.10
+        # Các khoảng độ trễ đọc từ chữ nổ gần đây, và số lần đã thấy chữ nổ trong phiên.
+        self._brackets: list[tuple[float, float]] = []
+        self._flash_seen = 0
         self._pending_tap: dict | None = None
         self._last_offset = 0.0
         self._csv = None
@@ -497,6 +511,16 @@ class Runner:
                 slider = scene.detail["slider"]
                 zone = (slider.lo, slider.hi)
                 if self._zone_anchor is None or _same_zone(zone, self._zone_anchor, slider.pointer):
+                    # Thanh cũ còn đó, chữ chưa nổ: cú bấm tới sau ảnh này.
+                    self._flash_lo = max(self._flash_lo or 0.0, offset)
+                elif offset - FLASH_SHOW >= DELAY_MIN:
+                    # Thanh mới đã vẽ xong: chữ đã nổ và tắt (0,27s) trước ảnh này. Ảnh canh quá muộn.
+                    self._flash_hi = offset - FLASH_SHOW
+            elif scene.kind == "busy" and 0.05 <= offset <= self._latency + FLASH_AIM + 0.06:
+                slider = (scene.detail or {}).get("slider")
+                if slider is not None and slider.lo is None:
+                    # Không thấy vùng vàng mà cũng không có vệt trắng: mồi đang đè kín vùng hẹp, chữ chưa nổ.
+                    # Vùng 36px bị che đúng lúc cú bấm tới, nên mốc dưới của vùng hẹp chỉ lấy được từ đây.
                     self._flash_lo = max(self._flash_lo or 0.0, offset)
             return False
         if self._tapped_zone and 0 < offset <= FLASH_WAIT:
@@ -505,7 +529,8 @@ class Runner:
                 lo = max(lo, self._flash_lo)
             self._trace(f"chữ nổ ở +{offset:.2f}s (trắng {white:.2f}, chữ {text}): độ trễ trong {lo:.2f}-{hi:.2f}s")
             self._flash_lo = None
-            self._learn_delay(lo, hi)
+            self._flash_seen += 1
+            self._learn_delay(*_delay_target(self._brackets, (lo, hi)))
             self._on_hit()
             self._zone = None
             self._zone_anchor = None
@@ -594,6 +619,13 @@ class Runner:
             return
         half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
         if half > 0 and abs(err) <= max(12.0, 0.45 * half):
+            if self._flash_seen >= FLASH_TRUSTED:
+                # Độ trễ đã được chữ nổ xác nhận nhiều lần: cú này trượt vì sai số vài px ở vùng hẹp, không phải
+                # độ trễ sai. Dò ±0,10s (23px) trên vùng 36px là chắc chắn trượt thêm hai cú (phiên 13:43 lượt 2).
+                self._latency_nudge = 0.0
+                self._probe = False
+                self._trace("trượt sát tâm nhưng độ trễ đã chắc theo chữ nổ: bấm lại, không dò")
+                return
             step = 0.10 * (self._miss_streak // 2 + 1)
             probe = min(0.25, step) if self._miss_streak % 2 == 0 else -min(0.25, step)
             self._latency_nudge = probe
@@ -789,6 +821,7 @@ class Runner:
         # Ảnh kế tiếp canh rơi vào lúc chữ nổ: lúc chụp (CAPTURE_FRACTION của thời gian chụp) = lệnh + trễ máy + FLASH_AIM.
         self._flash_due = tapped + max(0.0, self._latency + FLASH_AIM - CAPTURE_FRACTION * self._shot_dur)
         self._flash_lo = None
+        self._flash_hi = None
         self.log(
             f"Bấm thanh trượt: mồi {self.tracker.position(tapped + latency):.0f}, "
             f"vùng {aim[0]:.0f}-{aim[1]:.0f}, tốc độ {fit[0]:.0f}px/s."
@@ -909,8 +942,14 @@ class Runner:
             if self._flash_lo is not None and self._flash_lo > self._latency:
                 # Trúng (thanh đổi hoặc màn kết quả) nhưng ảnh canh lúc chữ nổ vẫn thấy thanh cũ: game nhận muộn hơn.
                 self._trace(f"ảnh +{self._flash_lo:.2f}s sau lệnh chưa nổ chữ mà vẫn trúng: cú bấm tới muộn hơn")
-                self._learn_delay(self._flash_lo + 0.02, DELAY_MAX)
+                # Mốc dưới này ghép với các khoảng chữ nổ (mốc trên) để kẹp độ trễ từ hai phía.
+                self._learn_delay(*_delay_target(self._brackets, (self._flash_lo + 0.02, DELAY_MAX)))
+            elif self._flash_hi is not None and self._flash_hi < self._latency:
+                # Ảnh canh lúc chữ nổ đã thấy thanh mới: chữ nổ xong từ trước, cú bấm tới sớm hơn tool tưởng.
+                self._trace(f"ảnh +{self._flash_hi + FLASH_SHOW:.2f}s sau lệnh đã sang thanh mới: cú bấm tới sớm hơn")
+                self._learn_delay(*_delay_target(self._brackets, (DELAY_MIN, self._flash_hi)))
             self._flash_lo = None
+            self._flash_hi = None
             self._remember(hit=True)
             self.log(f"Trúng vùng vàng. Độ trễ cú bấm đang dùng: {self._latency:.2f}s.")
         self._miss_streak = 0
@@ -1258,19 +1297,39 @@ def _num(value, spec: str) -> str:
     return format(value, spec)
 
 
+def _delay_target(brackets: list[tuple[float, float]], latest: tuple[float, float]) -> tuple[float, float]:
+    """Khoảng độ trễ nên nhắm sau khi thêm khoảng chữ nổ mới nhất. Sửa `brackets` tại chỗ.
+
+    Giao của các khoảng gần đây hẹp hơn từng khoảng. Có giao thì nhắm ±0,01s quanh giữa phần giao;
+    các khoảng không giao nhau (một ảnh lệch giờ) thì bỏ hết khoảng cũ, chỉ giữ khoảng mới.
+    """
+    brackets.append(latest)
+    del brackets[:-BRACKET_KEEP]
+    lo = max(b[0] for b in brackets)
+    hi = min(b[1] for b in brackets)
+    if lo > hi:
+        brackets[:] = [latest]
+        lo, hi = latest
+    if len(brackets) < 2:
+        return lo, hi
+    mid = (lo + hi) / 2
+    return mid - 0.01, mid + 0.01
+
+
 def _flash_age(white: float, text: int, base: float = 0.10) -> tuple[float, float] | None:
     """Chữ đã nổ được bao lâu (giây, khoảng [sớm nhất, muộn nhất]) theo ảnh. None nếu ảnh không có chữ nổ.
 
-    Vệt trắng trên thanh: 0,41–0,43 ở 3 khung đầu (30fps), 0,29–0,33 khung thứ 4, rồi 0,15–0,18 tới khung thứ 8.
-    Thanh thường 0,08–0,13 tùy máy nên ngưỡng tính theo mức nền `base` của máy. Chữ Great/Perfect hiện từ
-    khoảng 0,15s và còn treo nửa giây sau khi vệt tắt; chỉ còn chữ thì chỉ biết chữ đã nổ hơn 0,25s.
+    Vệt trắng trên thanh (video máy này / máy người dùng khác, 30fps): 0,41–0,43 / 0,37–0,41 ở 3 khung đầu,
+    0,33 / 0,29 ở khung thứ 4 (0,10–0,13s), rồi 0,15–0,18 tới khung thứ 8. Thanh thường 0,08–0,13 tùy máy nên
+    ngưỡng tính theo mức nền `base` của máy. Chữ Great/Perfect hiện từ khoảng 0,15s và còn treo nửa giây sau khi
+    vệt tắt; chỉ còn chữ thì chỉ biết chữ đã nổ hơn 0,25s.
     """
-    if white >= max(0.33, base + 0.15):
-        return 0.0, 0.13
+    if white >= max(0.35, base + 0.18):
+        return 0.0, 0.10
     if white >= max(0.22, base + 0.10):
-        return 0.06, 0.15
+        return 0.10, 0.13
     if white >= max(0.14, base + 0.04):
-        return 0.10, 0.30
+        return 0.13, 0.30
     if text >= FLASH_TEXT_MIN:
         return 0.25, 0.90
     return None

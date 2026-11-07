@@ -127,8 +127,9 @@ def _test_memory(check) -> None:
     from fishing_tool.flow import Runner
     from fishing_tool.vision import Scene, Slider
 
-    check("vệt trắng mới nổ", _flash_age(0.41, 0), (0.0, 0.13))
-    check("vệt trắng đang tắt", _flash_age(0.16, 0), (0.10, 0.30))
+    check("vệt trắng mới nổ", _flash_age(0.41, 0), (0.0, 0.10))
+    check("vệt trắng khung thứ tư", _flash_age(0.30, 0), (0.10, 0.13))
+    check("vệt trắng đang tắt", _flash_age(0.16, 0), (0.13, 0.30))
     check("chỉ còn chữ Great", _flash_age(0.12, 8000), (0.25, 0.90))
     check("thanh thường không phải chữ nổ", _flash_age(0.12, 300), None)
     check("máy có nền sáng thì vệt mờ chưa tính", _flash_age(0.16, 0, base=0.13), None)
@@ -154,6 +155,19 @@ def _test_memory(check) -> None:
     learn._miss_streak = 2
     learn._nudge_from_miss(slipped)
     check("trượt lần ba: dò xa hơn", learn._latency_nudge, 0.20)
+    learn._flash_seen = 3
+    learn._miss_streak = 0
+    learn._nudge_from_miss(slipped)
+    check("độ trễ đã chắc theo chữ nổ thì trượt sát tâm không dò", (learn._latency_nudge, learn._probe), (0.0, False))
+    learn._flash_seen = 0
+    from fishing_tool.flow import _delay_target
+
+    kept: list = []
+    check("một khoảng chữ nổ: dùng nguyên khoảng", _delay_target(kept, (0.20, 0.33)), (0.20, 0.33))
+    got = _delay_target(kept, (0.21, 0.35))
+    check("hai khoảng: nhắm giữa phần giao 0,21–0,33", (round(got[0], 3), round(got[1], 3)), (0.26, 0.28))
+    got = _delay_target(kept, (0.50, 0.60))
+    check("khoảng lạc không giao: bỏ khoảng cũ", (got, len(kept)), ((0.50, 0.60), 1))
     learn._pending_tap = {"time": 5.0, "total": 0.30, "width": 36, "speed": 240, "first": False}
     learn._cast_tap_log = [dict(slipped, ket_qua_bam=None, tre=0.30, do=True, moc_lo=300, moc_hi=336, mau_tiep=[])]
     learn._remember(True)
@@ -169,6 +183,27 @@ def _test_memory(check) -> None:
     check("ghi mốc cú bấm tới muộn hơn", late._flash_lo is not None and abs(late._flash_lo - 0.344) < 0.01, True)
     late._on_hit()
     check("trúng muộn thì tăng độ trễ máy", abs(late._latency - 0.364) < 0.01, True)
+    # Vùng 36px bị mồi che đúng lúc chữ sắp nổ: ảnh busy không vệt trắng, không vùng. Cũng là "chưa nổ".
+    late._tapped_zone = True
+    late._tap_at = 150.0
+    late._flash_lo = None
+    hidden = Scene("busy", "purple", {"slider": Slider(None, None, None), "flash": (0.05, 0)})
+    check("mồi che vùng hẹp, chưa nổ chữ: chưa chốt", late._flash_check(hidden, 150.2, 150.56), False)
+    check("ảnh che ghi mốc dưới", late._flash_lo is not None and abs(late._flash_lo - 0.344) < 0.01, True)
+    # Ảnh canh đã thấy thanh mới (0,60s sau lệnh): chữ nổ xong trước đó, độ trễ ≤ 0,33.
+    late._latency = 0.50
+    late._tapped_zone = True
+    late._tap_at = 170.0
+    late._flash_lo = None
+    late._zone_anchor = (300, 410)
+    new_bar = Scene("slider", "purple", {"slider": Slider(450, 486, 240.0), "flash": (0.10, 0)})
+    check("thanh mới chưa phải chữ nổ", late._flash_check(new_bar, 170.46, 170.82), False)
+    check("thanh mới ghi mốc trên", late._flash_hi is not None and abs(late._flash_hi - 0.334) < 0.01, True)
+    late._brackets = []
+    late._on_hit()
+    check("thấy thanh mới sớm thì hạ độ trễ", abs(late._latency - 0.42) < 0.01, True)
+    late._latency = 0.364
+    late._brackets = []
     late._tapped_zone = True
     late._tap_at = 200.0
     burst = Scene("busy", "purple", {"slider": Slider(None, None, None), "flash": (0.42, 0)})

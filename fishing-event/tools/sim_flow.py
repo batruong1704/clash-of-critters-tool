@@ -6,6 +6,7 @@ Chạy từ thư mục fishing-event: py -3 tools/sim_flow.py [tốc_độ_px_m�
 Ví dụ máy chậm như máy người dùng khác: py -3 tools/sim_flow.py 240 6 0.50 0.65
 """
 
+import random
 import sys
 import threading
 import time
@@ -36,8 +37,8 @@ class FakeGame:
             return normalize(video.read()[1])
 
         self.idle, self.wait, self.reel = frame(290), frame(480), frame(612)
-        # Vệt trắng mờ dần như video: khung 667 lúc vừa nổ (0,43), 670 (0,18), 672 lúc sắp tắt (0,15).
-        self.cool, self.result = (frame(667), frame(670), frame(672)), frame(722)
+        # Vệt trắng mờ dần như video: khung 667 lúc vừa nổ (0,43), 669 khung thứ tư (0,33), 672 lúc sắp tắt (0,15).
+        self.cool, self.result = (frame(667), frame(669), frame(672)), frame(722)
         base = frame(640)
         self.sprite = base[812:902, 505:550].copy()
         clean = base.copy()
@@ -88,7 +89,7 @@ class FakeGame:
             return self.reel
         if self.state == "cool":
             age = now - self.since
-            return self.cool[0 if age < 0.13 else 1 if age < 0.20 else 2]
+            return self.cool[0 if age < 0.10 else 1 if age < 0.13 else 2]
         if self.state == "result":
             return self.result
         zone = self.zones[(self.shown) % len(self.zones)]
@@ -139,11 +140,13 @@ class FakeAdb:
             self.game.tap_at(x, y, when)
 
     def timed_screenshot(self):
+        # Máy thật chụp lúc nào trong khoảng lệnh thì không đều: xê ±0,03s quanh mốc giả định.
         started = time.time()
-        time.sleep(SHOT_AT)
+        jitter = random.uniform(-0.03, 0.03)
+        time.sleep(max(0.0, SHOT_AT + jitter))
         self._flush(time.time())
         img = self.game.image(time.time())
-        time.sleep(SHOT_TIME - SHOT_AT)
+        time.sleep(max(0.0, SHOT_TIME - SHOT_AT - jitter))
         return img, started, time.time()
 
     def screenshot(self):
