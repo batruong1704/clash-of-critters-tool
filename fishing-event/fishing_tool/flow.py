@@ -7,7 +7,9 @@ Tool chỉ nhìn ảnh ADB và bấm qua ADB. Không đụng chuột Windows.
 from __future__ import annotations
 
 import csv
+import queue
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -247,6 +249,9 @@ class Runner:
         self._seen_gold: list[int] = []
         self._stop_noted = False
         self._settle_since: float | None = None
+        self._io_lock = threading.Lock()
+        self._names: queue.Queue = queue.Queue()
+        self._namer: threading.Thread | None = None
 
     # ----- vòng chính -----
 
@@ -322,6 +327,7 @@ class Runner:
                 finally:
                     if self._cast_open:
                         self._flush_cast_taps("dung")
+                    self._finish_names()
         except Stopped:
             self.log("Đã dừng.")
         except Finished as done:
@@ -957,16 +963,11 @@ class Runner:
         if self._cast_open and self._fished:
             golds, frames = self._sample_result(img, ended)
             gold = _pick_gold(golds)
-            # Đóng màn trước. So loài chạy trên ảnh đã giữ, không giữ người chờ cú bấm.
+            # Đóng màn rồi trả vòng câu ngay. Tên cá so trên ảnh đã giữ, ở luồng khác.
             self._dismiss()
             self.log(CALCULATING)
-            catch = _classify_frames(frames)
-            self._trace(f"loài={catch.label if catch else ''}")
-            if catch is None:
-                self.log("Câu được cá" + (f", +{gold} Gold." if gold else "."))
-            else:
-                self.log(f"Câu được {catch.label}" + (f", +{gold} Gold." if gold else "."))
-            self._record("thanh_cong", gold, catch)
+            self._name_later(self._close_success(gold), frames)
+            return
         elif self._cast_open:
             # Màn kết quả hiện ra khi cần chưa hề được quăng: popup khác chen vào, không tính lượt.
             self.log("Có popup chen vào, chưa tính lượt.")
@@ -1037,11 +1038,70 @@ class Runner:
         s.timing = False
         label = catch.label if catch is not None else ""
         rarity = catch.rarity if catch is not None else ""
-        if self._writer is not None:
-            self._writer.writerow([s.casts, outcome, gold, label, rarity, self._cast_taps, f"{seconds:.1f}"])
+        self._write_summary(s.casts, outcome, gold, label, rarity, self._cast_taps, seconds)
         self._flush_cast_taps(outcome)
         self._cast_open = False
         self.on_stats(s)
+
+    def _close_success(self, gold: int) -> dict:
+        """Chốt lượt câu được để vòng chính quăng tiếp. Tên cá ghi sau."""
+        s = self.stats
+        s.caught += 1
+        s.gold += gold
+        seconds = time.time() - self._cast_started
+        s.seconds = seconds
+        s.timing = False
+        row = {"luot": s.casts, "gold": gold, "bam": self._cast_taps, "giay": seconds}
+        self._flush_cast_taps("thanh_cong")
+        self._cast_open = False
+        self.on_stats(s)
+        return row
+
+    def _name_later(self, row: dict, frames: list) -> None:
+        """So loài trên ảnh đã giữ. Không giữ vòng câu chờ kết quả."""
+        if self._namer is None or not self._namer.is_alive():
+            self._namer = threading.Thread(target=self._name_loop, name="phan-loai-ca", daemon=True)
+            self._namer.start()
+        self._names.put((row, list(frames)))
+
+    def _name_loop(self) -> None:
+        while True:
+            item = self._names.get()
+            if item is None:
+                return
+            row, frames = item
+            try:
+                catch = _classify_frames(frames)
+            except Exception as exc:
+                self._trace(f"phân loại lỗi: {exc}")
+                catch = None
+            self._publish_name(row, catch)
+
+    def _publish_name(self, row: dict, catch) -> None:
+        label = "" if catch is None else catch.label
+        rarity = "" if catch is None else catch.rarity
+        gold = int(row["gold"])
+        self._trace(f"loài={label}")
+        if catch is None:
+            text = "Câu được cá" + (f", +{gold} Gold." if gold else ".")
+        else:
+            text = f"Câu được {catch.label}" + (f", +{gold} Gold." if gold else ".")
+        self.log(text)
+        self._write_summary(row["luot"], "thanh_cong", gold, label, rarity, row["bam"], row["giay"])
+
+    def _finish_names(self) -> None:
+        """Chờ tên cá của những lượt đã đóng màn. Gọi trước khi đóng file kết quả."""
+        if self._namer is None:
+            return
+        self._names.put(None)
+        self._namer.join(timeout=30)
+        self._namer = None
+
+    def _write_summary(self, casts: int, outcome: str, gold: int, label: str, rarity: str, taps: int, seconds: float) -> None:
+        if self._writer is None:
+            return
+        with self._io_lock:
+            self._writer.writerow([casts, outcome, gold, label, rarity, taps, f"{seconds:.1f}"])
 
     def _begin_cast_clock(self) -> None:
         """Bắt đầu đếm thời gian của con cá đang câu."""
@@ -1234,7 +1294,8 @@ class Runner:
             self._trace(f"    mẫu tiếp {_fmt_follow(row.get('mau_tiep') or [])}")
             self._write_tap_csv(outcome, row)
         if self._tap_handle is not None:
-            self._tap_handle.flush()
+            with self._io_lock:
+                self._tap_handle.flush()
         self._cast_tap_log = []
 
     def _write_tap_csv(self, outcome: str, row: dict | None) -> None:
@@ -1245,10 +1306,12 @@ class Runner:
             blank[0] = self.stats.casts
             blank[1] = outcome
             blank[2] = 0
-            self._tap_writer.writerow(blank)
+            with self._io_lock:
+                self._tap_writer.writerow(blank)
             return
         follow = _fmt_follow(row.get("mau_tiep") or [])
-        self._tap_writer.writerow(
+        with self._io_lock:
+            self._tap_writer.writerow(
             [
                 self.stats.casts,
                 outcome,
@@ -1378,7 +1441,9 @@ class Runner:
         self._trace(f"bấm bỏ qua kết quả tại {point}")
 
     def _trace(self, text: str) -> None:
-        if self._trace_file is not None:
+        if self._trace_file is None:
+            return
+        with self._io_lock:
             self._trace_file.write(f"[{time.time() - self._t0:7.2f}] {text}\n")
             self._trace_file.flush()
 

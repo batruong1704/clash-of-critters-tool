@@ -746,7 +746,10 @@ class Presenter:
                 caught = caught_fish(message)
                 level = caught[1] if caught else fish_level(message)
                 self.view.append_log(message, level)
-                self._note_fish_row(message, caught)
+                updated = self._note_fish_row(message, caught)
+                # Tên cá có thể về sau khi lượt kế đã bắt đầu. Không kéo dòng trạng thái về lượt cũ.
+                if caught is not None and updated != getattr(self, "_fish_iid", ""):
+                    return
                 step = fish_step(message)
                 if step:
                     self._status(step)
@@ -1100,28 +1103,43 @@ class Presenter:
         if notes:
             self.view.open_notes_dialog(notes)
 
-    def _note_fish_row(self, message: str, caught: tuple[str, str] | None = None) -> None:
+    def _note_fish_row(self, message: str, caught: tuple[str, str] | None = None) -> str:
+        """Ghi dòng bảng. Trả về mã dòng vừa chạm, để tên cá muộn không đè lượt đang câu."""
         if message.startswith("Lượt ") and "quăng" in message:
             number = message.split(":", 1)[0].split()[1].split("/")[0]
             self._fish_turn = number
             self._fish_iid = self.view.add_result((number, "Đang chạy…", "", "", ""))
             self.view.start_cast_clock(self._fish_iid)
-        elif caught is not None:
+            return ""
+        if message.startswith("Đang tính toán kết quả"):
+            turn = getattr(self, "_fish_turn", "")
+            iid = getattr(self, "_fish_iid", "")
+            pending = getattr(self, "_fish_name_rows", None)
+            if pending is None:
+                pending = []
+                self._fish_name_rows = pending
+            pending.append((iid, turn))
+            self.view.finish_result(iid, (turn, "Đang tính toán kết quả", "", "…", "…"), "run")
+            return iid
+        if caught is not None:
             gold = "–"
             if "+" in message and "Gold" in message:
                 gold = "+" + message.split("+", 1)[1].split()[0].rstrip(".")
             label, tone = caught
-            turn = getattr(self, "_fish_turn", "")
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Thành công", "", label, gold), tone)
-        elif message.startswith("Đang tính toán kết quả"):
-            turn = getattr(self, "_fish_turn", "")
-            self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Đang tính toán kết quả", "", "…", "…"), "run")
+            pending = getattr(self, "_fish_name_rows", None) or []
+            if pending:
+                iid, turn = pending.pop(0)
+            else:
+                iid, turn = getattr(self, "_fish_iid", ""), getattr(self, "_fish_turn", "")
+            self.view.finish_result(iid, (turn, "Thành công", "", label, gold), tone)
+            return iid
         elif message.startswith("Thất bại"):
             turn = getattr(self, "_fish_turn", "")
             self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Thất bại", "", "–", "–"), "fail")
         elif message.startswith("Không thấy màn kết quả"):
             turn = getattr(self, "_fish_turn", "")
             self.view.finish_result(getattr(self, "_fish_iid", ""), (turn, "Không rõ", "", "–", "–"), "warn")
+        return ""
 
     def _note_gift_row(self, message: str) -> None:
         if self.mode == "fish":

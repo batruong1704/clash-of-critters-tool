@@ -442,6 +442,87 @@ def _test_reel_watch(check) -> None:
     check("đã bấm Reel ở vòng chụp thì không bấm lần nữa", stub.taps, [])
 
 
+def _test_name_async(check) -> None:
+    import csv
+    import io
+    import threading
+    import time
+
+    import fishing_tool.flow as flow
+    from gift_tool.presenter import Presenter
+
+    class Catch:
+        label = "Cá Test"
+        rarity = "xanh"
+
+    def slow(_frames):
+        time.sleep(0.35)
+        return Catch()
+
+    class Stub:
+        def screenshot(self):
+            return np.zeros((1280, 720, 3), np.uint8)
+
+        def tap(self, x, y):
+            pass
+
+        def tap_fast(self, x, y):
+            pass
+
+        def close(self):
+            pass
+
+    class Sheet:
+        def __init__(self):
+            self.rows = []
+            self.n = 0
+
+        def add_result(self, values):
+            self.n += 1
+            iid = f"r{self.n}"
+            self.rows.append(("add", iid, values))
+            return iid
+
+        def finish_result(self, iid, values, tone):
+            self.rows.append(("finish", iid, values[1], values[3]))
+
+        def start_cast_clock(self, iid):
+            pass
+
+    original = flow._classify_frames
+    flow._classify_frames = slow
+    try:
+        notes = []
+        runner = flow.Runner(Stub(), notes.append, threading.Event(), 1, learn=False)
+        runner.quick = True
+        runner._result_saved = 12
+        runner.stats.casts = 1
+        runner._cast_open = True
+        runner._fished = True
+        runner._cast_started = time.time()
+        runner._writer = csv.writer(buf := io.StringIO())
+        opened = time.time() - 2
+        started = time.time()
+        runner._on_result(np.zeros((1280, 720, 3), np.uint8), None, opened, opened)
+        elapsed = time.time() - started
+        check("đóng màn xong thì câu tiếp, không chờ tên cá", elapsed < 0.2 and runner._cast_open is False, True)
+        check("chưa có tên khi vừa đóng màn", any("Cá Test" in item for item in notes), False)
+        runner._finish_names()
+        check("tên cá về sau", any("Câu được Cá Test" in item for item in notes), True)
+        check("bảng csv có loài", "Cá Test" in buf.getvalue(), True)
+    finally:
+        flow._classify_frames = original
+
+    view = Sheet()
+    presenter = Presenter.__new__(Presenter)
+    presenter.view = view
+    presenter._note_fish_row("Lượt 1/2: quăng cần (còn 10 rod).")
+    presenter._note_fish_row("Đang tính toán kết quả.")
+    presenter._note_fish_row("Lượt 2/2: quăng cần (còn 9 rod).")
+    updated = presenter._note_fish_row("Câu được Cá Test, +4 Gold.", ("Cá Test", "xanh"))
+    check("tên cá điền vào lượt cũ", (updated, view.rows[-1][1:]), ("r1", ("r1", "Thành công", "Cá Test")))
+
+
 def main() -> int:
     video = cv2.VideoCapture(str(VIDEO))
 
@@ -527,6 +608,7 @@ def main() -> int:
     _test_memory(check)
     _test_stop(check)
     _test_reel_watch(check)
+    _test_name_async(check)
 
     print("XONG" if failed == 0 else f"{failed} mục lỗi")
     return 1 if failed else 0
