@@ -363,6 +363,10 @@ def main() -> int:
     check("rod ảnh 3", read_rods(_png("3.")), 110)
     check("gold video 722", read_gold(frame(722)), 548)
     check("gold video 716", read_gold(frame(716)), 548)
+    # Tia sáng dính vào đỉnh chữ 4 lúc chữ đang nảy. Trước đọc thiếu chữ thành 58 (lượt +50 ngày 7/11 ghi 5).
+    check("gold video 710, tia sáng dính chữ", read_gold(frame(710)), 548)
+    check("gold video 712, tia sáng dính chữ", read_gold(frame(712)), 548)
+    check("gold video 711, chữ dính tia sáng không đọc được thì bỏ ảnh", read_gold(frame(711)), None)
     check("không có gold ở video 760", read_gold(frame(760)), None)
     one = frame(722).copy()
     one[410:445, 520:575] = one[430, 650]

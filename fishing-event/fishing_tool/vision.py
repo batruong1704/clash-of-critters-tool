@@ -231,6 +231,84 @@ def _read_glyph(glyph) -> str | None:
     return best
 
 
+def _digit_glyphs(mask, low: int, high: int) -> list[tuple[int, int, int, int]]:
+    """Các khối trong mask có cỡ chữ số (x, y, w, h), theo thứ tự trái sang phải."""
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    glyphs = []
+    for index in range(1, count):
+        x, y, w, h, area = [int(v) for v in stats[index]]
+        if h < low or h > high or w > h * 1.1 or w < h * 0.2 or area < 40:
+            continue
+        glyphs.append((x, y, w, h))
+    glyphs.sort()
+    return glyphs
+
+
+def _digit_chain(glyphs: list[tuple[int, int, int, int]], gap_ratio: float, rightmost: bool) -> list:
+    """Dãy chữ cùng hàng với chữ cao nhất và đứng sát nhau. Viền đồng xu hay sao lấp lánh nằm lệch hàng."""
+    anchor = max(glyphs, key=lambda item: item[3])
+    mid = anchor[1] + anchor[3] / 2
+    row = [g for g in glyphs if abs(g[1] + g[3] / 2 - mid) <= anchor[3] * 0.25]
+    chain = [row[0]]
+    for item in row[1:]:
+        prev = chain[-1]
+        if item[0] - (prev[0] + prev[2]) <= max(prev[3], item[3]) * gap_ratio:
+            chain.append(item)
+        else:
+            chain = [item] if rightmost else chain
+    return chain
+
+
+def _chain_digits(mask, chain: list) -> tuple[list[str], tuple[int, int] | None, list]:
+    """Đọc từng khối trong dãy. Trả (chữ số đọc được, dải hàng y0-y1 của các chữ đã nhận, các khối không đọc được)."""
+    digits = []
+    known = []
+    unread = []
+    for x, y, w, h in chain:
+        digit = _read_glyph(mask[y : y + h, x : x + w])
+        if digit is None:
+            unread.append((x, y, w, h))
+            continue
+        digits.append(digit)
+        known.append((x, y, w, h))
+    if not known:
+        return digits, None, unread
+    band = (min(y for _, y, _, _ in known), max(y + h for _, y, _, h in known))
+    return digits, band, unread
+
+
+def _without_round_blobs(mask, band_h: int):
+    """Bản sao mask đã xóa các khối cao hơn hẳn chữ số mà gần vuông (đồng xu, ngôi sao đứng riêng),
+    kèm khoảng x của từng khối đã xóa. Chữ số dính tia sáng cao hơn chữ thường chừng 1,3 lần và hẹp, nên còn lại."""
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    out = mask.copy()
+    spans = []
+    for index in range(1, count):
+        x, _, w, h, _ = [int(v) for v in stats[index]]
+        if h >= 1.4 * band_h and w >= 0.85 * h:
+            out[labels == index] = 0
+            spans.append((x, x + w))
+    return out, spans
+
+
+def _digit_sized(unread: list, band: tuple[int, int] | None, skip_spans: list | None = None) -> bool:
+    """Có khối không đọc được mà cỡ bằng chữ số đã nhận.
+
+    Mảnh xu nhỏ kẹt giữa hai chữ thì không tính. Mảnh nằm trong khoảng x của đồng xu đã xóa (cung tròn
+    còn sót, hình cá trong xu) cũng không tính.
+    """
+    if band is None:
+        return bool(unread)
+    band_h = band[1] - band[0]
+    for x, _, w, h in unread:
+        if h < 0.8 * band_h or not 0.3 <= w / max(h, 1) <= 0.85:
+            continue
+        if any(x0 - 2 <= x and x + w <= x1 + 2 for x0, x1 in skip_spans or []):
+            continue
+        return True
+    return False
+
+
 def _read_digits(img, box, height_range, kind: str, rightmost: bool = False, require_plus: bool = False) -> int | None:
     """Đọc dãy chữ số trong box (tỉ lệ). Chữ trắng hoặc vàng, có viền đen quanh nét."""
     x0, y0, x1, y1 = box
@@ -247,40 +325,41 @@ def _read_digits(img, box, height_range, kind: str, rightmost: bool = False, req
     dark = (gray <= 90).astype(np.uint8)
     near = cv2.dilate(dark, np.ones((9, 9), np.uint8)) > 0
     mask = (fill & near).astype(np.uint8) * 255
-    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     low, high = int(height_range[0] * REF_H), int(height_range[1] * REF_H)
-    glyphs = []
-    for index in range(1, count):
-        x, y, w, h, area = [int(v) for v in stats[index]]
-        if h < low or h > high or w > h * 1.1 or w < h * 0.2 or area < 40:
-            continue
-        glyphs.append((x, y, w, h))
+    glyphs = _digit_glyphs(mask, low, high)
     if not glyphs:
         return None
-    glyphs.sort()
-    # Giữ các chữ cùng hàng với chữ cao nhất. Viền đồng xu hay sao lấp lánh nằm lệch hàng.
-    anchor = max(glyphs, key=lambda item: item[3])
-    mid = anchor[1] + anchor[3] / 2
-    row = [g for g in glyphs if abs(g[1] + g[3] / 2 - mid) <= anchor[3] * 0.25]
     # Chữ vàng lúc vừa nảy cách nhau hơn một thân chữ. Ngưỡng cũ cắt +77 còn +7.
     gap_ratio = 2.2 if kind == "gold" else 0.9
-    chain = [row[0]]
-    for item in row[1:]:
-        prev = chain[-1]
-        if item[0] - (prev[0] + prev[2]) <= max(prev[3], item[3]) * gap_ratio:
-            chain.append(item)
-        else:
-            chain = [item] if rightmost else chain
-    digits = []
-    for x, y, w, h in chain:
-        glyph = mask[y : y + h, x : x + w]
-        digit = _read_glyph(glyph)
-        if digit is None:
-            # Mảnh xu nằm giữa hai chữ không được xóa cả số. Rod và hệ số thì một nét lạ vẫn hủy.
-            if kind == "gold":
-                continue
+    chain = _digit_chain(glyphs, gap_ratio, rightmost)
+    digits, band, unread = _chain_digits(mask, chain)
+    if kind != "gold":
+        # Rod và hệ số thì một nét lạ vẫn hủy.
+        if unread:
             return None
-        digits.append(digit)
+    elif band is None:
+        return None
+    else:
+        # Tia sáng vàng phía trên chữ +Gold dính vào đỉnh một chữ số, hai hình gộp thành một khối: khối đó
+        # không nhận ra được (video demo khung 710: 548 đọc thành 58) hoặc quá cao nên bị bỏ (+50 đọc thành 5).
+        # Cắt mask theo dải hàng của các chữ đã nhận được rồi đọc lại. Còn khối cỡ chữ số mà không đọc được
+        # thì số này thiếu chữ, bỏ ảnh, không trả số ngắn hơn số thật.
+        # Đồng xu và ngôi sao đứng riêng vừa cao quá cỡ chữ vừa tròn; cắt dải sẽ biến chúng thành vài cung hẹp
+        # cỡ chữ số. Xóa các khối đó trước. Chữ số dính tia sáng thì hẹp hơn nhiều so với chiều cao, nên còn lại.
+        y0b, y1b = max(0, band[0] - 1), min(mask.shape[0], band[1] + 1)
+        clipped, spans = _without_round_blobs(mask, band[1] - band[0])
+        clipped[:y0b] = 0
+        clipped[y1b:] = 0
+        again = _digit_glyphs(clipped, max(low, int((y1b - y0b) * 0.6)), high)
+        if again:
+            chain2 = _digit_chain(again, gap_ratio, rightmost)
+            digits2, band2, unread2 = _chain_digits(clipped, chain2)
+            if _digit_sized(unread2, band2, spans):
+                return None
+            if digits2 and len(digits2) >= len(digits):
+                digits, chain, mask = digits2, chain2, clipped
+        elif _digit_sized(unread, band, spans):
+            return None
     if not digits or len(digits) > 7:
         return None
     value = int("".join(digits))
