@@ -57,6 +57,23 @@ def _test_memory(check) -> None:
         check("nhớ: chưa đo độ trễ máy", again.tap_delay(), None)
         again.set_tap_delay(0.9)
         check("nhớ: độ trễ máy kẹp trong 0,15–0,70 và đọc lại được", Memory(path).tap_delay(), 0.70)
+        check("nhớ: hồ sơ máy trống khi chưa câu", (again.flash_count, again.brackets, again.shot_dur), (0, [], None))
+        again.set_profile(flash_count=250, brackets=[(0.2, 0.3), (0.22, 0.33)], shot_dur=0.65, white_base=0.15)
+        back = Memory(path)
+        check(
+            "nhớ: hồ sơ máy đọc lại được, số lần chữ nổ chặn ở 100",
+            (back.flash_count, back.brackets, back.shot_dur, back.white_base),
+            (100, [(0.2, 0.3), (0.22, 0.33)], 0.65, 0.15),
+        )
+        check("nhớ: chưa có cú dò trúng thì chưa có lệch nhắm", back.aim_bias(), None)
+        back.record(0.25, True, 36, 230, xe=-0.05)
+        check("nhớ: một cú dò trúng đã cho lệch nhắm", back.aim_bias(), (-0.05, 1))
+        for xe in (-0.04, -0.06, -0.15, 0.05):
+            back.record(0.25, True, 36, 230, xe=xe)
+        check("nhớ: lệch nhắm là trung vị các cú dò trúng, đọc lại được", Memory(path).aim_bias(), (-0.05, 5))
+        for _ in range(12):
+            back.record(0.25, True, 36, 230, xe=0.08)
+        check("nhớ: lệch dương kẹp ở +0,02", back.aim_bias(), (0.02, 12))
 
     # Mồi chạy 200px/s từ đầu thanh. Bấm lúc t=1.0 thì mồi ở POINTER_LO+200. Vùng vàng 400-480 chứa mồi
     # khi L trong khoảng ngắn sau đó (rồi lại vào vùng sau khi nảy, ngoài lưới thử).
@@ -157,8 +174,28 @@ def _test_memory(check) -> None:
     check("trượt lần ba: dò xa hơn", learn._latency_nudge, 0.20)
     learn._flash_seen = 3
     learn._miss_streak = 0
-    learn._nudge_from_miss(slipped)
-    check("độ trễ đã chắc theo chữ nổ thì trượt sát tâm không dò", (learn._latency_nudge, learn._probe), (0.0, False))
+    sure = dict(slipped, van_toc=230.0, an=7.2)
+    learn._nudge_from_miss(sure)
+    check("độ trễ đã chắc: trượt sát tâm thì dò âm một bán kính ăn (7,2+4px)/230", (learn._latency_nudge, learn._probe), (-0.049, True))
+    learn._miss_streak = 1
+    learn._nudge_from_miss(sure)
+    check("cú dò thứ hai sang phía dương", learn._latency_nudge, 0.049)
+    learn._miss_streak = 2
+    learn._nudge_from_miss(sure)
+    check("cú dò thứ ba âm gấp đôi", learn._latency_nudge, -0.097)
+    learn._latency_nudge = -0.049
+    learn._miss_streak = 0
+    learn._pending_tap = {"time": 5.0, "total": 0.35, "width": 36, "speed": 240, "first": False}
+    learn._cast_tap_log = [dict(sure, ket_qua_bam=None, tre=0.351, hoc=0.40, do=True, moc_lo=300, moc_hi=336, mau_tiep=[])]
+    learn._remember(True)
+    check("cú dò trúng khi độ trễ đã chắc: thành lệch nhắm, độ trễ chữ nổ giữ nguyên", (learn._bias, learn._latency), (-0.049, 0.40))
+    learn._latency_nudge = 0.0
+    check("lệch nhắm cộng vào độ trễ lệnh", round(learn._command_latency(), 3), 0.351)
+    learn._bias = 0.0
+    learn._flash_seen = 30
+    learn._learn_delay(0.10, 0.20)
+    check("đã thấy chữ nổ 30 lần: mỗi lần chỉ nhích 0,02s", learn._latency, 0.38)
+    learn._latency = 0.40
     learn._flash_seen = 0
     from fishing_tool.flow import _delay_target
 

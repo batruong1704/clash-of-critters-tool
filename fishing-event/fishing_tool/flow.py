@@ -14,7 +14,7 @@ from datetime import datetime
 
 from fishing_tool.catch import classify
 from fishing_tool.device import FishAdb
-from fishing_tool.memory import DELAY_MAX, DELAY_MIN, Memory, consistent_latencies
+from fishing_tool.memory import BIAS_MAX, BIAS_MIN, DELAY_MAX, DELAY_MIN, Memory, consistent_latencies
 from fishing_tool.paths import LOGS
 from fishing_tool.predictor import Tracker
 from fishing_tool.vision import (
@@ -70,6 +70,7 @@ FLASH_WAIT = 1.50
 FLASH_TEXT_MIN = 2500
 # Mỗi lần học chỉ dịch độ trễ tối đa chừng này, để một ảnh lệch giờ không kéo cả máy đi.
 DELAY_STEP = 0.08
+DELAY_STEP_MIN = 0.02
 # Gom chừng này khoảng chữ nổ gần nhất rồi nhắm vào giữa phần giao của chúng. Một khoảng rộng 0,13s; đứng ở mép
 # khoảng là lệch tới 0,04s ≈ 9px, đủ trượt vùng 36px (phiên 13:43: giao 0,21–0,27 mà tool giữ 0,28).
 BRACKET_KEEP = 8
@@ -138,7 +139,17 @@ class Stats:
 
 
 class Runner:
-    def __init__(self, adb: FishAdb, log, stop, casts: int, multiplier: int = 1, on_stats=None, learn: bool = True):
+    def __init__(
+        self,
+        adb: FishAdb,
+        log,
+        stop,
+        casts: int,
+        multiplier: int = 1,
+        on_stats=None,
+        learn: bool = True,
+        memory: Memory | None = None,
+    ):
         if multiplier not in MULTIPLIERS:
             raise ValueError(f"Hệ số phải là một trong {MULTIPLIERS}")
         self.templates = Templates()
@@ -186,24 +197,33 @@ class Runner:
         self._tap_at = 0.0
         self._tapped_zone = False
         self._miss_streak = 0
-        # learn=False (mô phỏng, kiểm tra) thì không đọc cũng không ghi bộ nhớ học.
-        self.memory = Memory(enabled=learn)
+        # learn=False (mô phỏng, kiểm tra) thì không đọc cũng không ghi bộ nhớ học. `memory` đưa sẵn (mô phỏng
+        # nhiều phiên trên một file tạm) thì dùng nó, bật tắt theo chính nó.
+        self.memory = memory if memory is not None else Memory(enabled=learn)
+        learn = self.memory.enabled
         self._latency = (self.memory.tap_delay() if learn else None) or BASE_LATENCY
         self._latency_nudge = 0.0
+        # Lệch nhắm học qua các phiên: game nhận cú bấm lệch bao nhiêu giây so với lúc nổ chữ, đo bằng các cú dò
+        # trúng. Chữ nổ chỉ kẹp độ trễ tới ±0,05s; phần này mới là chỗ còn lại để vùng 36px trúng đều.
+        self._bias = 0.0
+        if learn and (found := self.memory.aim_bias()) is not None:
+            self._bias = found[0]
         # Phần xê hiện tại là cú dò độ trễ máy sau khi trượt giữa vùng (trúng thì dời độ trễ máy theo).
         self._probe = False
         # Chụp ảnh mất bao lâu trên máy này (trung bình trượt). Dùng để canh ảnh rơi đúng lúc chữ nổ.
-        self._shot_dur = 0.40
+        # Phiên trước đã đo thì lấy luôn; máy chậm (0,65s) mà bắt đầu từ 0,40 thì vài cú đầu chụp hụt chữ nổ.
+        self._shot_dur = self.memory.shot_dur or 0.40
         self._flash_due: float | None = None
         # Ảnh sau lệnh bấm còn thấy thanh cũ mà chưa nổ chữ: cú bấm tới muộn hơn mốc này (giây sau lệnh).
         self._flash_lo: float | None = None
         # Ảnh sau lệnh bấm đã thấy thanh mới: cú bấm tới sớm hơn mốc này.
         self._flash_hi: float | None = None
         # Vệt trắng của thanh lúc bình thường trên máy này (0,08–0,13 tùy máy). Chữ nổ phải sáng hơn hẳn mức này.
-        self._white_base = 0.10
-        # Các khoảng độ trễ đọc từ chữ nổ gần đây, và số lần đã thấy chữ nổ trong phiên.
-        self._brackets: list[tuple[float, float]] = []
-        self._flash_seen = 0
+        self._white_base = self.memory.white_base or 0.10
+        # Các khoảng độ trễ đọc từ chữ nổ gần đây, và số lần đã thấy chữ nổ (cộng dồn qua các phiên).
+        # Mang theo từ phiên trước: độ trễ đã chắc thì không dò ±0,10s ngay cú trượt đầu tiên của phiên mới.
+        self._brackets: list[tuple[float, float]] = list(self.memory.brackets)
+        self._flash_seen = self.memory.flash_count
         self._pending_tap: dict | None = None
         self._last_offset = 0.0
         self._csv = None
@@ -227,7 +247,11 @@ class Runner:
         LOGS.mkdir(parents=True, exist_ok=True)
         path = LOGS / f"cau-ca-{datetime.now():%Y%m%d-%H%M%S}.csv"
         self.log(f"Tự câu cá: {self.target} lượt, hệ số x{self.multiplier}.")
-        self.log(f"Độ trễ cú bấm bắt đầu từ {self._latency:.2f}s ({self.memory.summary()}).")
+        sure = "đã chắc" if self._flash_seen >= FLASH_TRUSTED else "đang dò"
+        self.log(
+            f"Độ trễ cú bấm bắt đầu từ {self._latency:.2f}s ({sure}), lệch nhắm {self._bias:+.2f}s "
+            f"({self.memory.summary()})."
+        )
         trace_path = path.with_name(path.stem + "-vet.txt")
         tap_path = path.with_name(path.stem + "-bam.csv")
         try:
@@ -296,6 +320,7 @@ class Runner:
         except Finished as done:
             self.log(str(done))
         finally:
+            self._save_profile()
             self.adb.close()
             self._writer = None
             self._tap_handle = None
@@ -490,7 +515,15 @@ class Runner:
 
     def _command_latency(self) -> float:
         """Độ trễ đem vào tính giờ bấm: độ trễ của máy cộng phần xê sau cú trượt. Vùng rộng hay hẹp đều một số."""
-        return min(DELAY_MAX, max(DELAY_MIN, self._latency + self._latency_nudge))
+        return min(DELAY_MAX, max(DELAY_MIN, self._latency + self._bias + self._latency_nudge))
+
+    def _save_profile(self) -> None:
+        self.memory.set_profile(
+            flash_count=self._flash_seen,
+            brackets=self._brackets,
+            shot_dur=self._shot_dur,
+            white_base=self._white_base,
+        )
 
     def _flash_check(self, scene, started: float, ended: float) -> bool:
         """True nếu ảnh này có chữ nổ (vệt trắng hoặc chữ Great/Perfect). Ảnh đó không đọc mồi được.
@@ -531,6 +564,7 @@ class Runner:
             self._flash_lo = None
             self._flash_seen += 1
             self._learn_delay(*_delay_target(self._brackets, (lo, hi)))
+            self._save_profile()
             self._on_hit()
             self._zone = None
             self._zone_anchor = None
@@ -538,12 +572,17 @@ class Runner:
         return True
 
     def _learn_delay(self, lo: float, hi: float) -> None:
-        """Kéo độ trễ của máy vào khoảng [lo, hi], mỗi lần tối đa DELAY_STEP. Đang trong khoảng thì giữ."""
+        """Kéo độ trễ của máy vào khoảng [lo, hi], mỗi lần tối đa một bước. Đang trong khoảng thì giữ.
+
+        Bước nhỏ dần theo số lần đã thấy chữ nổ: mới dò thì đi 0,08s cho nhanh tới nơi, đã thấy vài chục lần
+        thì một ảnh lệch giờ chỉ kéo được 0,02s. Máy đổi hẳn (0,10s) vẫn theo kịp sau dăm cú trúng.
+        """
         current = self._latency
+        step = max(DELAY_STEP_MIN, DELAY_STEP / (1 + self._flash_seen / 10))
         if current < lo:
-            updated = min(lo, current + DELAY_STEP)
+            updated = min(lo, current + step)
         elif current > hi:
-            updated = max(hi, current - DELAY_STEP)
+            updated = max(hi, current - step)
         else:
             return
         updated = round(min(DELAY_MAX, max(DELAY_MIN, updated)), 3)
@@ -620,11 +659,20 @@ class Runner:
         half = (float(row["vung_hi"]) - float(row["vung_lo"])) / 2
         if half > 0 and abs(err) <= max(12.0, 0.45 * half):
             if self._flash_seen >= FLASH_TRUSTED:
-                # Độ trễ đã được chữ nổ xác nhận nhiều lần: cú này trượt vì sai số vài px ở vùng hẹp, không phải
-                # độ trễ sai. Dò ±0,10s (23px) trên vùng 36px là chắc chắn trượt thêm hai cú (phiên 13:43 lượt 2).
-                self._latency_nudge = 0.0
-                self._probe = False
-                self._trace("trượt sát tâm nhưng độ trễ đã chắc theo chữ nổ: bấm lại, không dò")
+                # Độ trễ chữ nổ đã chắc mà mồi vẫn "ở tâm" lúc trượt: game nhận cú bấm lệch giờ so với lúc nổ chữ
+                # (mồi đứng yên vài khung rồi mới nổ). err_px không thấy phần này vì tool nhắm đúng tâm tại giờ giả
+                # định. Dò từng bước đúng bằng bán kính ăn của vùng (36px: ~0,06s; ±0,10s cũ là chắc chắn trượt),
+                # âm trước vì chữ nổ không thể tới trước lúc game nhận. Cú dò trúng được ghi làm lệch nhắm lâu dài.
+                vel = row.get("van_toc") or self.tracker.velocity(self._t0 + row["t_lenh"] + row["tre"])
+                if vel is None or abs(vel) < 80:
+                    return
+                eat = row.get("an") or 0.40 * half
+                step = (float(eat) + 4.0) / abs(float(vel))
+                order = (-1, 1, -2, 2, -3, 3)
+                probe = order[min(self._miss_streak, len(order) - 1)] * step
+                self._latency_nudge = round(min(0.25, max(-0.25, probe)), 3)
+                self._probe = True
+                self._trace(f"trượt sát tâm dù độ trễ đã chắc theo chữ nổ: dò lệch nhắm {self._latency_nudge:+.3f}s")
                 return
             step = 0.10 * (self._miss_streak // 2 + 1)
             probe = min(0.25, step) if self._miss_streak % 2 == 0 else -min(0.25, step)
@@ -806,7 +854,8 @@ class Runner:
         self._trace(
             f"BẤM lệnh t={tapped - self._t0:.2f} dự kiến tới game {tapped - self._t0 + latency:.2f} "
             f"mồi dự đoán={self.tracker.position(tapped + latency):.0f} độ lệch={offset:+.2f} "
-            f"trễ={latency:.2f} máy={self._latency:.2f} xê={self._latency_nudge:+.2f} chụp={self._shot_dur:.2f}"
+            f"trễ={latency:.2f} máy={self._latency:.2f} xê={self._latency_nudge:+.2f} "
+            f"lệch={self._bias:+.2f} chụp={self._shot_dur:.2f}"
         )
         self._trace(
             f"  mốc={anchor[0]}-{anchor[1]} nới={grown[0]}-{grown[1]} ăn=±{eat:.0f} "
@@ -961,15 +1010,31 @@ class Runner:
             return
         self._mark_open_tap(hit)
         err = None
+        xe = None
         row = next((item for item in reversed(self._cast_tap_log) if item.get("ket_qua_bam") is not None), None)
         if row is not None:
             err = row.get("err_px")
             if hit and row.get("do"):
-                # Cú dò trúng sau khi cú giữa vùng trượt: độ trễ của máy nằm quanh độ trễ vừa dùng.
-                self._trace(f"cú dò {row['tre']:.2f}s trúng, dời độ trễ máy theo")
-                self._learn_delay(float(row["tre"]) - 0.04, float(row["tre"]) + 0.04)
+                if self._flash_seen >= FLASH_TRUSTED and row.get("hoc") is not None:
+                    # Độ trễ chữ nổ đã chắc: cú dò trúng cho biết game nhận lệch bao nhiêu so với lúc nổ chữ.
+                    xe = float(row["tre"]) - float(row["hoc"])
+                    self._trace(f"cú dò {row['tre']:.2f}s trúng: lệch nhắm {xe:+.3f}s so với độ trễ chữ nổ")
+                else:
+                    # Chưa thấy chữ nổ mấy: độ trễ của máy nằm quanh độ trễ vừa dùng.
+                    self._trace(f"cú dò {row['tre']:.2f}s trúng, dời độ trễ máy theo")
+                    self._learn_delay(float(row["tre"]) - 0.04, float(row["tre"]) + 0.04)
         ok = consistent_latencies(self.tracker, tap["time"], self._zone, hit) if self._zone is not None else None
-        self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok, err)
+        self.memory.record(tap["total"], hit, tap["width"], tap["speed"], tap["first"], ok, err, xe)
+        if xe is not None:
+            self._refresh_bias(xe)
+
+    def _refresh_bias(self, latest: float) -> None:
+        """Lấy lại lệch nhắm sau một cú dò trúng. Không có bộ nhớ (mô phỏng không nhớ) thì dùng ngay số vừa đo."""
+        found = self.memory.aim_bias()
+        bias, count = found if found is not None else (round(min(BIAS_MAX, max(BIAS_MIN, latest)), 3), 1)
+        if abs(bias - self._bias) >= 0.005:
+            self._trace(f"lệch nhắm học được {bias:+.3f}s theo {count} cú dò trúng (trước {self._bias:+.3f}s)")
+        self._bias = bias
 
     def _prepare_cast_taps(self) -> None:
         """Xóa bảng cú bấm của lượt trước. Gọi lúc bắt đầu một lượt quăng."""

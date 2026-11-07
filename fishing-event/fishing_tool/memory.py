@@ -33,6 +33,18 @@ ZONE_TRUST = 0.7  # số mẫu tối thiểu của thanh để học từ cú b�
 # Độ trễ cú bấm hợp lý trên emulator: máy này 0,29s, máy chậm đã gặp 0,50s.
 DELAY_MIN = 0.15
 DELAY_MAX = 0.70
+# Hồ sơ máy nhớ qua các phiên: số lần chữ nổ đã thấy (độ chắc của độ trễ), các khoảng chữ nổ gần nhất,
+# thời gian chụp một ảnh, vệt trắng nền của thanh. Phiên mới không phải dò lại từ đầu.
+FLASH_COUNT_CAP = 100
+BRACKETS_KEEP = 8
+# Lệch nhắm: game nhận cú bấm sớm hơn lúc nổ chữ một chút (video 7/11: mồi đứng yên 3 khung rồi mới nổ), nên độ trễ
+# đo theo chữ nổ hơi muộn so với lúc game nhận. err_px không đo được phần này (mồi tại giờ tới giả định luôn ở tâm
+# vì tool nhắm vào đó). Chỉ cú dò trúng mới cho biết: trượt sát tâm khi độ trễ đã chắc thì dò lệch ± đúng bán kính
+# ăn, cú nào trúng thì phần bù của cú đó là một số đo. Trung vị các số đo gần nhất là lệch nhắm đem vào giờ bấm.
+# Âm là phát lệnh muộn hơn độ trễ chữ nổ. Chữ nổ không thể tới trước lúc game nhận nên lệch dương chỉ cho vài phần trăm.
+BIAS_WINDOW = 12
+BIAS_MIN = -0.10
+BIAS_MAX = 0.02
 
 
 def _clamp_delay(value: float) -> float:
@@ -86,6 +98,10 @@ class Memory:
         self.enabled = enabled
         self.taps: list[dict] = []
         self._tap_delay: float | None = None
+        self.flash_count = 0
+        self.brackets: list[tuple[float, float]] = []
+        self.shot_dur: float | None = None
+        self.white_base: float | None = None
         if enabled:
             self._load()
 
@@ -96,9 +112,21 @@ class Memory:
             self.taps = [t for t in taps if isinstance(t, dict) and "hit" in t]
             raw = data.get("tre_may")
             self._tap_delay = None if raw is None else _clamp_delay(float(raw))
+            self.flash_count = min(FLASH_COUNT_CAP, max(0, int(data.get("chu_no") or 0)))
+            self.brackets = [
+                (float(lo), float(hi))
+                for lo, hi in (data.get("khoang") or [])
+                if DELAY_MIN - 0.05 <= float(lo) <= float(hi) <= DELAY_MAX + 0.05
+            ][-BRACKETS_KEEP:]
+            self.shot_dur = _optional(data.get("chup"), 0.10, 2.00)
+            self.white_base = _optional(data.get("trang_nen"), 0.02, 0.30)
         except (OSError, ValueError, AttributeError, TypeError):
             self.taps = []
             self._tap_delay = None
+            self.flash_count = 0
+            self.brackets = []
+            self.shot_dur = None
+            self.white_base = None
 
     def _save(self) -> None:
         if not self.enabled:
@@ -108,7 +136,15 @@ class Memory:
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(
                 json.dumps(
-                    {"version": 3, "tre_may": self._tap_delay, "taps": self.taps[-KEEP_TAPS:]},
+                    {
+                        "version": 4,
+                        "tre_may": self._tap_delay,
+                        "chu_no": self.flash_count,
+                        "khoang": [[round(lo, 3), round(hi, 3)] for lo, hi in self.brackets[-BRACKETS_KEEP:]],
+                        "chup": None if self.shot_dur is None else round(self.shot_dur, 3),
+                        "trang_nen": None if self.white_base is None else round(self.white_base, 3),
+                        "taps": self.taps[-KEEP_TAPS:],
+                    },
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
@@ -130,6 +166,38 @@ class Memory:
             return
         self._tap_delay = _clamp_delay(float(value))
         self._save()
+
+    def set_profile(
+        self,
+        flash_count: int | None = None,
+        brackets: list[tuple[float, float]] | None = None,
+        shot_dur: float | None = None,
+        white_base: float | None = None,
+    ) -> None:
+        """Ghi hồ sơ máy để phiên sau bắt đầu ngay ở chỗ phiên này dừng."""
+        if not self.enabled:
+            return
+        if flash_count is not None:
+            self.flash_count = min(FLASH_COUNT_CAP, max(0, int(flash_count)))
+        if brackets is not None:
+            self.brackets = [(float(lo), float(hi)) for lo, hi in brackets][-BRACKETS_KEEP:]
+        if shot_dur is not None:
+            self.shot_dur = float(shot_dur)
+        if white_base is not None:
+            self.white_base = float(white_base)
+        self._save()
+
+    def aim_bias(self) -> tuple[float, int] | None:
+        """(lệch nhắm, số cú dò trúng đã dùng), giây. None khi chưa có cú dò nào trúng.
+
+        Mỗi cú dò trúng ghi `xe` = phần bù so với độ trễ chữ nổ lúc đó. Trung vị của các cú gần nhất là phần
+        bù cho lần sau. Một cú trúng đã đủ dùng: vùng ăn ±10px nên cú đó chỉ ra lệch tới ±0,045s.
+        """
+        rows = [tap for tap in self.taps if tap.get("xe") is not None][-BIAS_WINDOW:]
+        if not rows:
+            return None
+        bias = float(np.median([float(tap["xe"]) for tap in rows]))
+        return round(min(BIAS_MAX, max(BIAS_MIN, bias)), 3), len(rows)
 
     def latency(self) -> tuple[float, int] | None:
         """(độ trễ tốt nhất, số cú trúng đã dùng). None khi chưa đủ cú trúng rõ ràng."""
@@ -164,6 +232,7 @@ class Memory:
         first: bool = False,
         ok: list[float] | None = None,
         err: float | None = None,
+        xe: float | None = None,
     ) -> None:
         if not self.enabled:
             return
@@ -177,6 +246,7 @@ class Memory:
                 "first": first,
                 "ok": ok,
                 "err": None if err is None else round(float(err), 1),
+                "xe": None if xe is None else round(float(xe), 3),
             }
         )
         if len(self.taps) > KEEP_TAPS:
@@ -188,5 +258,19 @@ class Memory:
         if not total:
             return "chưa có dữ liệu"
         hits = len(self.hits)
-        learned = sum(1 for t in self.taps if t.get("ok"))
-        return f"{total} cú bấm đã nhớ, trúng {hits} ({100 * hits / total:.0f}%), {learned} cú dùng được để dò độ trễ"
+        parts = [f"{total} cú bấm đã nhớ, trúng {hits} ({100 * hits / total:.0f}%)"]
+        if self.flash_count:
+            parts.append(f"chữ nổ đã thấy {self.flash_count} lần")
+        bias = self.aim_bias()
+        if bias is not None:
+            parts.append(f"lệch nhắm {bias[0]:+.2f}s theo {bias[1]} cú dò trúng")
+        if self.shot_dur is not None:
+            parts.append(f"chụp {self.shot_dur:.2f}s/ảnh")
+        return ", ".join(parts)
+
+
+def _optional(raw, lo: float, hi: float) -> float | None:
+    if raw is None:
+        return None
+    value = float(raw)
+    return value if lo <= value <= hi else None

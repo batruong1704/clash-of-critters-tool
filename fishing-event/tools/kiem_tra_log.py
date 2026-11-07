@@ -40,7 +40,10 @@ FLASH = re.compile(r"^chữ nổ ở \+([\d.]+)s \(trắng ([\d.]+), chữ (\d+)
 DELAY = re.compile(r"^độ trễ cú bấm của máy ([\d.]+) → ([\d.]+)s")
 LATE = re.compile(r"^ảnh \+([\d.]+)s sau lệnh chưa nổ chữ mà vẫn trúng")
 PROBE = re.compile(r"^trượt dù mồi ở giữa vùng lúc giả định: dò độ trễ máy ([+-][\d.]+)s")
+BIAS_PROBE = re.compile(r"^trượt sát tâm dù độ trễ đã chắc theo chữ nổ: dò lệch nhắm ([+-][\d.]+)s")
 PROBE_HIT = re.compile(r"^cú dò ([\d.]+)s trúng")
+BIAS = re.compile(r"^lệch nhắm học được ([+-][\d.]+)s theo (\d+) cú")
+TAP_BIAS = re.compile(r"lệch=([+-][\d.]+)")
 CAST = re.compile(r"^lượt (\d+): (\d+) lần bấm thanh trượt")
 SPECIES = re.compile(r"^loài=(.*)$")
 UNMEASURED = re.compile(r"^err_px=không đo được(?: \((.*)\))?")
@@ -84,6 +87,8 @@ class Session:
         self.late_frames: list[float] = []
         self.probes: list[float] = []
         self.probe_hits: list[float] = []
+        self.bias_start: float | None = None
+        self.bias_changes: list[tuple[float, int]] = []  # (lệch nhắm, số cú dùng)
         self.bar_waits: list[tuple[int, float]] = []  # (độ rộng, giây từ lúc thanh hiện tới lệnh bấm)
         self.confirm: list[tuple[str, float]] = []  # (cách xác nhận, giây từ lệnh tới TRÚNG)
         self.unmeasured_reasons: list[str] = []
@@ -130,6 +135,8 @@ class Session:
                     self.delay_start = float(s.group(3))
                 if "máy=" in text:
                     self.old_format = False
+                if self.bias_start is None and (b := TAP_BIAS.search(text)):
+                    self.bias_start = float(b.group(1))
                 if bar_since is not None:
                     self.bar_waits.append((_width_bin(bar_width), last_tap_t - bar_since))
                     bar_since = None
@@ -155,11 +162,14 @@ class Session:
             if (s := LATE.match(text)):
                 self.late_frames.append(float(s.group(1)))
                 continue
-            if (s := PROBE.match(text)):
+            if (s := PROBE.match(text)) or (s := BIAS_PROBE.match(text)):
                 self.probes.append(float(s.group(1)))
                 continue
             if (s := PROBE_HIT.match(text)):
                 self.probe_hits.append(float(s.group(1)))
+                continue
+            if (s := BIAS.match(text)):
+                self.bias_changes.append((float(s.group(1)), int(s.group(2))))
                 continue
             if text == "TRÚNG" and last_tap_t is not None:
                 how = "chữ nổ" if last_flash_clock is not None and clock - last_flash_clock < 0.05 else "thanh đổi/kết quả"
@@ -317,6 +327,13 @@ class Session:
                 out.append(f"  Xác nhận trúng qua {how_}: {len(dts)} cú, sau lệnh trung vị {_fmt(_median(dts), '.2f', 's')}.")
             done, why = self.converged()
             out.append(f"  Đã dò xong độ trễ máy: {'rồi' if done else 'chưa'} ({why}).")
+            if self.bias_start is not None:
+                end = self.bias_changes[-1] if self.bias_changes else None
+                out.append(
+                    f"  Lệch nhắm học từ mồi thật: đầu phiên {self.bias_start:+.2f}s"
+                    + (f", cuối phiên {end[0]:+.2f}s theo {end[1]} cú dò trúng (đổi {len(self.bias_changes)} lần)" if end else ", không đổi")
+                    + "."
+                )
 
         # Cú bấm theo độ rộng
         if self.taps:

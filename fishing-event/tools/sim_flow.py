@@ -2,8 +2,11 @@
 
 Mồi trên thanh trượt được vẽ lại theo sóng tam giác. Trúng khi mồi nằm trong vùng vàng lúc cú bấm tới game.
 
-Chạy từ thư mục fishing-event: py -3 tools/sim_flow.py [tốc_độ_px_mỗi_giây] [số_thanh_trượt] [trễ_bấm] [thời_gian_chụp]
+Chạy từ thư mục fishing-event:
+  py -3 tools/sim_flow.py [tốc_độ_px_mỗi_giây] [số_thanh_trượt] [trễ_bấm] [thời_gian_chụp] [file_nhớ|-] [mồi_đứng_yên] [phần_ăn]
 Ví dụ máy chậm như máy người dùng khác: py -3 tools/sim_flow.py 240 6 0.50 0.65
+Thử học qua nhiều phiên trên game nổ chữ muộn 0,10s sau khi nhận, chỉ ăn 60% nửa vùng:
+  py -3 tools/sim_flow.py 240 6 0.29 0.36 %TEMP%\hoc-thu.json 0.10 0.6   (chạy lặp lại vài lần)
 """
 
 import random
@@ -26,6 +29,11 @@ SHOT_AT = 0.30
 TAP_DELAY = 0.25
 # Vệt trắng của cú trúng kéo dài 0,27s trước khi thanh mới hiện (video 7/11).
 FLASH_TIME = 0.27
+# Video 7/11: mồi đứng yên 3 khung (0,10s) ở chỗ game nhận cú bấm rồi mới nổ chữ. Tham số 6 bật đoạn đứng yên đó
+# để thử phần học lệch nhắm: độ trễ đo theo chữ nổ sẽ muộn hơn lúc game nhận đúng chừng này.
+FLASH_LAG = 0.0
+# Game thật chỉ ăn khoảng 50–67% nửa vùng vàng nhìn thấy. Tham số 7 (mặc định 1,0 = ăn cả vùng như trước).
+EAT = 1.0
 
 
 class FakeGame:
@@ -55,6 +63,7 @@ class FakeGame:
         self.taps = 0
         self.hits = 0
         self.log = []
+        self.frozen = 0.0
 
     def pointer(self, when):
         # Mồi chạy liền mạch qua các thanh trong một lượt, như game thật.
@@ -64,13 +73,17 @@ class FakeGame:
 
     def advance(self, now):
         age = now - self.since
+        # Đổi trạng thái đúng mốc giờ, không phải lúc được hỏi ảnh: hỏi muộn thì vệt trắng phải đã mờ tương ứng.
         if self.state == "wait" and age > 2.0:
-            self.set("reel", now)
+            self.set("reel", self.since + 2.0)
+        elif self.state == "freeze" and age > FLASH_LAG:
+            self.set("cool", self.since + FLASH_LAG)
+            self.advance(now)
         elif self.state == "cool" and age > FLASH_TIME:
             if self.shown >= self.sliders:
-                self.set("result", now)
+                self.set("result", self.since + FLASH_TIME)
             else:
-                self.set("slider", now)
+                self.set("slider", self.since + FLASH_TIME)
         elif self.state == "slider" and now - self.slider_at > 30:
             self.set("idle", now)
 
@@ -92,7 +105,12 @@ class FakeGame:
             return self.cool[0 if age < 0.10 else 1 if age < 0.13 else 2]
         if self.state == "result":
             return self.result
-        zone = self.zones[(self.shown) % len(self.zones)]
+        if self.state == "freeze":
+            # Thanh cũ còn đó, mồi đứng yên ở chỗ game nhận. shown đã tăng nên lấy lại vùng vừa bấm.
+            return self.draw(self.zones[(self.shown - 1) % len(self.zones)], self.frozen)
+        return self.draw(self.zones[self.shown % len(self.zones)], self.pointer(now))
+
+    def draw(self, zone, x):
         img = self.clean.copy()
         # Vẽ lại vùng vàng theo zone hiện tại: tô thanh bằng màu vàng/xanh của video.
         strip = img[851:877, 175:556].copy()
@@ -101,7 +119,7 @@ class FakeGame:
         strip[:, :] = track
         strip[:, zone[0] - 175 : zone[1] - 175] = yellow
         img[851:877, 175:556] = strip
-        x = int(self.pointer(now))
+        x = int(x)
         h, w = self.sprite.shape[:2]
         img[812 : 812 + h, x - w // 2 : x - w // 2 + w] = self.sprite
         return img
@@ -117,12 +135,13 @@ class FakeGame:
             self.taps += 1
             zone = self.zones[self.shown % len(self.zones)]
             at = self.pointer(when)
-            ok = zone[0] <= at <= zone[1]
+            ok = abs(at - (zone[0] + zone[1]) / 2) <= EAT * (zone[1] - zone[0]) / 2
             self.log.append((round(at), zone, ok))
             if ok:
                 self.hits += 1
                 self.shown += 1
-                self.set("cool", when)
+                self.frozen = at
+                self.set("freeze" if FLASH_LAG > 0 else "cool", when)
         elif self.state == "result":
             self.set("idle", when)
 
@@ -162,7 +181,7 @@ class FakeAdb:
 
 
 def main() -> None:
-    global TAP_DELAY, SHOT_TIME, SHOT_AT
+    global TAP_DELAY, SHOT_TIME, SHOT_AT, FLASH_LAG, EAT
     speed = float(sys.argv[1]) if len(sys.argv) > 1 else 240.0
     sliders = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     if len(sys.argv) > 3:
@@ -170,6 +189,10 @@ def main() -> None:
     if len(sys.argv) > 4:
         SHOT_TIME = float(sys.argv[4])
         SHOT_AT = 0.4 * SHOT_TIME
+    if len(sys.argv) > 6:
+        FLASH_LAG = float(sys.argv[6])
+    if len(sys.argv) > 7:
+        EAT = float(sys.argv[7])
     game = FakeGame(speed, sliders)
     messages = []
 
@@ -178,11 +201,23 @@ def main() -> None:
         print(f"[{time.time() - t0:5.1f}s] {text}")
 
     t0 = time.time()
-    runner = Runner(FakeAdb(game), log, threading.Event(), casts=2, multiplier=1, learn=False)
+    # Tham số 5: đường dẫn file nhớ tạm ("-" là không nhớ). Chạy nhiều lần cùng file để xem phiên sau có bắt đầu từ
+    # chỗ phiên trước không.
+    memory = None
+    if len(sys.argv) > 5 and sys.argv[5] != "-":
+        from pathlib import Path
+
+        from fishing_tool.memory import Memory
+
+        memory = Memory(Path(sys.argv[5]))
+    runner = Runner(FakeAdb(game), log, threading.Event(), casts=2, multiplier=1, learn=False, memory=memory)
     # Tool khởi đầu với độ trễ mặc định rồi tự dò độ trễ của game giả qua chữ nổ.
     stats = runner.run()
     print(f"bấm {game.taps} lần, trúng {game.hits}/{sliders * 2}; chi tiết (mồi, vùng, trúng): {game.log}")
-    print(f"độ trễ game giả {TAP_DELAY:.2f}s, tool dò được {runner._latency:.2f}s")
+    print(
+        f"độ trễ game giả {TAP_DELAY:.2f}s, tool dò được {runner._latency:.2f}s, "
+        f"lệch nhắm {runner._bias:+.3f}s, chữ nổ đã thấy {runner._flash_seen} lần"
+    )
     print(f"thống kê: {stats.casts} lượt, {stats.caught} thành công, {stats.gold} Gold")
 
 
