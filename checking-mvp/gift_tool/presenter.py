@@ -69,6 +69,88 @@ def _explain_failure(text: str) -> str:
     return "Chưa tải được bản mới. Kiểm tra mạng rồi thử lại."
 
 
+_SHIPPED = re.compile(r"^Ship (\d+\.\d+\.\d+)\b")
+_VERSION_FILE = re.compile(r"^versions/(\d+\.\d+\.\d+)\.md$")
+
+
+def parse_shipped_versions(text: str) -> list[tuple[str, str]]:
+    """Đọc log git thành (số phiên bản, hash), bản mới đứng trước. Trùng số thì giữ bản mới hơn."""
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        sha, subject = parts[0].strip(), parts[1].strip()
+        match = _SHIPPED.match(subject)
+        if match is None or not sha:
+            continue
+        version = match.group(1)
+        if version in seen:
+            continue
+        seen.add(version)
+        found.append((version, sha))
+    return found
+
+
+def published_versions(tree_text: str) -> set[str]:
+    """Số phiên bản còn file thông báo trên bản phát hành. File đã xóa thì không hiện trong danh sách."""
+    found: set[str] = set()
+    for line in tree_text.splitlines():
+        match = _VERSION_FILE.match(line.strip().replace("\\", "/"))
+        if match is not None:
+            found.add(match.group(1))
+    return found
+
+
+def list_shipped_versions(repo: Path) -> tuple[list[tuple[str, str]], str]:
+    """Các bản đã phát hành còn được giữ. Câu lỗi là tiếng Việt, rỗng khi đọc được."""
+    if shutil.which("git") is None:
+        return [], "Máy này chưa được cài đủ để đổi phiên bản."
+    if not (repo / ".git").exists():
+        return [], "Không tìm thấy dữ liệu bản cài nên chưa đổi phiên bản được."
+    ref = "origin/main"
+    if _git(repo, "rev-parse", "--verify", "--quiet", ref).returncode != 0:
+        ref = "main"
+    tree = _git(repo, "ls-tree", "-r", "--name-only", ref, "versions")
+    listed = _git(repo, "log", ref, "--format=%h %s")
+    if tree.returncode != 0 or listed.returncode != 0:
+        message = "Chưa đọc được danh sách phiên bản."
+        _log_update(message, tree.stderr or listed.stderr or listed.stdout)
+        return [], message
+    kept = published_versions(tree.stdout)
+    found = [item for item in parse_shipped_versions(listed.stdout) if item[0] in kept]
+    if not found:
+        return [], "Chưa có phiên bản nào để chọn."
+    return found, ""
+
+
+def switch_to_version(repo: Path, sha: str) -> tuple[bool, str]:
+    """Đưa thư mục tool về đúng bản đã phát hành. Không đẩy gì lên nơi phát hành."""
+    known = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
+    if known.returncode != 0:
+        fetched = _git(repo, "fetch", "--quiet", "origin", "main")
+        if fetched.returncode != 0:
+            message = _explain_failure(fetched.stderr or fetched.stdout)
+            _log_update(message, fetched.stderr or fetched.stdout)
+            return False, message
+        known = _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
+        if known.returncode != 0:
+            message = "Không tìm thấy phiên bản này."
+            _log_update(message, sha)
+            return False, message
+    switched = _git(repo, "switch", "--detach", sha)
+    if switched.returncode != 0:
+        raw = switched.stderr or switched.stdout
+        if any(mark in raw.lower() for mark in ("would be overwritten", "local changes", "please commit")):
+            message = "Chưa đổi được vì trong thư mục tool còn file đang sửa. Đóng tool, mở lại, rồi bấm Đổi phiên bản."
+        else:
+            message = "Chưa đổi được phiên bản. Đóng tool, mở lại, rồi thử một lần nữa."
+        _log_update(message, raw)
+        return False, message
+    return True, ""
+
+
 def _log_update(message: str, detail: str = "") -> None:
     """Ghi lần cập nhật. Dòng đầu là câu người dùng thấy, phần sau là lời kỹ thuật."""
     try:
@@ -259,9 +341,15 @@ def pull_from_github(repo: Path, on_status, on_progress) -> tuple[str, str]:
         _log_update(message, url.stderr or url.stdout)
         return message, ""
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    local = _git(repo, "rev-parse", "HEAD").stdout.strip()
     if not branch or branch == "HEAD":
+        on_status("Đang về bản phát hành…")
+        back = _git(repo, "switch", "main")
+        if back.returncode != 0:
+            message = _explain_failure(back.stderr or back.stdout)
+            _log_update(message, back.stderr or back.stdout)
+            return message, ""
         branch = "main"
+    local = _git(repo, "rev-parse", "HEAD").stdout.strip()
     sha, problem = _remote_sha(repo, branch)
     if not sha:
         message = "Không kết nối được để kiểm tra bản mới. Kiểm tra mạng rồi thử lại."
@@ -864,6 +952,95 @@ class Presenter:
                 self.view.toast(message)
 
         self.view.invoke(done)
+
+    def choose_version(self) -> None:
+        if self._updating:
+            self.view.toast("Đang cập nhật…")
+            return
+        dialog = self.view.open_version_dialog()
+        if self.running:
+            dialog.set_status("Đang chạy, hãy dừng trước khi đổi phiên bản.")
+            return
+        self._updating = True
+        self.view.set_update_busy(True)
+        dialog.set_status("Đang đọc danh sách phiên bản…")
+        threading.Thread(target=self._load_versions, args=(dialog,), daemon=True).start()
+
+    def _load_versions(self, dialog) -> None:
+        try:
+            versions, error = list_shipped_versions(REPO)
+        except Exception as exc:
+            _log_update("Không đọc được danh sách phiên bản.", str(exc))
+            versions, error = [], "Không đọc được danh sách phiên bản."
+
+        def done() -> None:
+            self._updating = False
+            self.view.set_update_busy(False)
+            if not dialog.alive:
+                return
+            if error:
+                dialog.set_status(error)
+                return
+            dialog.show_versions(versions, APP_VERSION, lambda version, sha: self._pick_version(dialog, version, sha))
+
+        self.view.invoke(done)
+
+    def _pick_version(self, dialog, version: str, sha: str) -> None:
+        if self._updating:
+            return
+        if self.running:
+            dialog.set_status("Đang chạy, hãy dừng trước khi đổi phiên bản.")
+            return
+        if version == APP_VERSION:
+            dialog.set_status(f"Bạn đang dùng phiên bản {version}.")
+            return
+        self._updating = True
+        self.view.set_update_busy(True)
+        dialog.set_busy(True)
+        dialog.set_status(f"Đang chuyển về phiên bản {version}…")
+        threading.Thread(target=self._switch_version, args=(dialog, version, sha), daemon=True).start()
+
+    def _switch_version(self, dialog, version: str, sha: str) -> None:
+        try:
+            ok, message = switch_to_version(REPO, sha)
+        except Exception as exc:
+            _log_update("Không đổi được phiên bản.", str(exc))
+            ok, message = False, "Không đổi được phiên bản. Hãy tắt tool rồi mở lại."
+
+        def done() -> None:
+            if ok:
+                _log_update(f"Đã chuyển về phiên bản {version}.")
+                self._relaunch(dialog, f"Đã về phiên bản {version}. Đang mở lại tool…")
+                return
+            self._updating = False
+            self.view.set_update_busy(False)
+            if dialog.alive:
+                dialog.set_busy(False)
+                dialog.set_status(message)
+            else:
+                self.view.toast(message)
+
+        self.view.invoke(done)
+
+    def _relaunch(self, dialog, status: str) -> None:
+        """Mở cửa sổ mới để nạp code vừa chuyển, rồi đóng cửa sổ đang giữ code cũ."""
+        self._save_settings()
+        if dialog.alive:
+            dialog.set_status(status)
+            self.view.root.update_idletasks()
+        try:
+            relaunch_app()
+        except OSError as exc:
+            self._updating = False
+            self.view.set_update_busy(False)
+            if dialog.alive:
+                dialog.set_busy(False)
+                dialog.set_status("Đã đổi phiên bản nhưng chưa mở lại được. Hãy tắt tool rồi mở lại.")
+            else:
+                self.view.toast("Đã đổi phiên bản nhưng chưa mở lại được. Hãy tắt tool rồi mở lại.")
+            _log_update("Chưa mở lại được sau khi đổi phiên bản.", str(exc))
+            return
+        self.view.root.destroy()
 
     def _restart_with_notes(self, dialog, notes: str) -> None:
         """Ghi phần có gì mới, mở cửa sổ mới, rồi đóng cửa sổ đang giữ code cũ."""

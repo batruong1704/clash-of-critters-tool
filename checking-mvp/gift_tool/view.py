@@ -24,7 +24,7 @@ MULT_LIST_FONT = ("Segoe UI", 18)
 TITLE_FONT = ("Segoe UI", 16, "bold")
 TILE_FONT = ("Segoe UI", 16, "bold")
 GO_FONT = ("Segoe UI", 12, "bold")
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 _CACHE_KEEP = {"cua-so.json"}
 _CACHE_DIRS = (
     LOGS,
@@ -389,6 +389,177 @@ class UpdateDialog:
         self.top.destroy()
         if self.view._update_dialog is self:
             self.view._update_dialog = None
+
+
+class VersionDialog:
+    """Danh sách bản đã phát hành. Bấm một dòng để tool quay về bản đó."""
+
+    def __init__(self, view: "MainView") -> None:
+        self.view = view
+        self.alive = True
+        self._busy = False
+        self._placed = False
+        self._rows: list[tuple[str, str]] = []
+        self._on_pick = None
+        colors = view.colors
+        top = tk.Toplevel(view.root)
+        self.top = top
+        top.title("Đổi phiên bản")
+        top.configure(bg=colors["panel"])
+        top.resizable(False, False)
+        top.transient(view.root)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        self.body = tk.Frame(top, bg=colors["panel"], padx=18, pady=16)
+        self.body.pack(fill="both", expand=True)
+        self.heading = tk.Label(
+            self.body,
+            text="Đổi phiên bản",
+            bg=colors["panel"],
+            fg=colors["text"],
+            font=("Segoe UI", 14, "bold"),
+            anchor="w",
+        )
+        self.heading.pack(fill="x")
+        self.status = tk.Label(
+            self.body,
+            text="Đang đọc danh sách phiên bản…",
+            bg=colors["panel"],
+            fg=colors["text"],
+            font=UI_FONT,
+            wraplength=320,
+            justify="left",
+            anchor="w",
+        )
+        self.status.pack(fill="x", pady=(8, 0))
+        self.box_wrap = tk.Frame(self.body, bg=colors["panel"])
+        self.list = tk.Listbox(
+            self.box_wrap,
+            height=12,
+            font=UI_FONT,
+            bd=0,
+            highlightthickness=1,
+            activestyle="none",
+            exportselection=False,
+        )
+        self.scroll = ttk.Scrollbar(self.box_wrap, command=self.list.yview)
+        self.list.configure(yscrollcommand=self.scroll.set)
+        self.list.bind("<ButtonRelease-1>", self._click)
+        self.close_btn = tk.Button(
+            self.body,
+            text="Đóng",
+            command=self.close,
+            font=UI_FONT,
+            bd=0,
+            padx=12,
+            pady=8,
+            cursor="hand2",
+        )
+        self.close_btn.pack(fill="x", pady=(14, 0))
+        self.apply_colors()
+        self._fit()
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        top.lift()
+        top.focus_force()
+
+    def apply_colors(self) -> None:
+        if not self.alive:
+            return
+        colors = self.view.colors
+        self.top.configure(bg=colors["panel"])
+        self.body.configure(bg=colors["panel"])
+        self.heading.configure(bg=colors["panel"], fg=colors["text"])
+        self.status.configure(bg=colors["panel"], fg=colors["text"])
+        self.box_wrap.configure(bg=colors["panel"])
+        self.list.configure(
+            bg=colors["log"],
+            fg=colors["text"],
+            highlightbackground=colors["line"],
+            highlightcolor=colors["line"],
+            selectbackground=colors["acc"],
+            selectforeground=colors["acc_t"],
+        )
+        self.close_btn.configure(
+            bg=colors["acc"],
+            fg=colors["acc_t"],
+            activebackground=colors["acc"],
+            activeforeground=colors["acc_t"],
+            highlightthickness=0,
+        )
+
+    def set_status(self, text: str) -> None:
+        if not self.alive:
+            return
+        self.status.configure(text=text)
+        self._fit()
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+
+    def show_versions(self, versions: list[tuple[str, str]], current: str, on_pick) -> None:
+        if not self.alive:
+            return
+        self._rows = list(versions)
+        self._on_pick = on_pick
+        self.list.delete(0, "end")
+        for version, _sha in self._rows:
+            label = f"Phiên bản {version}"
+            if version == current:
+                label += "   ·   đang dùng"
+            self.list.insert("end", label)
+        if not self.box_wrap.winfo_manager():
+            self.box_wrap.pack(fill="x", pady=(12, 0), before=self.close_btn)
+            self.list.pack(side="left", fill="both", expand=True)
+            self.scroll.pack(side="right", fill="y")
+        self.set_status("Bấm một phiên bản để quay lại.")
+        self._fit()
+
+    def _click(self, event) -> None:
+        if not self.alive or self._busy or self._on_pick is None:
+            return
+        index = self.list.nearest(event.y)
+        if index < 0 or index >= len(self._rows):
+            return
+        bbox = self.list.bbox(index)
+        if bbox is None or not (bbox[1] <= event.y <= bbox[1] + bbox[3]):
+            return
+        version, sha = self._rows[index]
+        self._on_pick(version, sha)
+
+    def _fit(self) -> None:
+        if not self.alive:
+            return
+        self.top.update_idletasks()
+        width = 360
+        height = max(self.top.winfo_reqheight(), 1)
+        if not self._placed:
+            root = self.view.root
+            x = root.winfo_rootx() + max(0, (root.winfo_width() - width) // 2)
+            y = root.winfo_rooty() + max(0, (root.winfo_height() - height) // 2)
+            self._placed = True
+            self.top.geometry(f"{width}x{height}+{x}+{y}")
+            return
+        self.top.geometry(f"{width}x{height}")
+
+    def lift(self) -> None:
+        if not self.alive:
+            return
+        self.top.lift()
+        self.top.focus_force()
+
+    def close(self) -> None:
+        if not self.alive or self._busy:
+            return
+        self.alive = False
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        self.top.destroy()
+        if self.view._version_dialog is self:
+            self.view._version_dialog = None
 
 
 class NotesDialog:
@@ -793,6 +964,7 @@ class MainView:
         self._settings_open = False
         self._update_busy = False
         self._update_dialog: UpdateDialog | None = None
+        self._version_dialog: VersionDialog | None = None
         self._notes_dialog: NotesDialog | None = None
         self._row_seq = 0
         self._bar_current = 0
@@ -1042,6 +1214,7 @@ class MainView:
         self.open_log_btn = self._settings_action(body, "Mở thư mục log", self._open_log_folder)
         self.purge_btn = self._settings_action(body, "Xóa cache", self.purge_log)
         self.update_btn = self._settings_action(body, "Cập nhật", self._update_app)
+        self.version_btn = self._settings_action(body, "Đổi phiên bản", self._choose_version)
         self.restart_btn = self._settings_action(body, "Khởi động lại", self._restart_app)
         self._refresh_cache_label()
 
@@ -1680,6 +1853,10 @@ class MainView:
         self._close_settings()
         self.presenter.update_from_github()
 
+    def _choose_version(self) -> None:
+        self._close_settings()
+        self.presenter.choose_version()
+
     def _restart_app(self) -> None:
         self._close_settings()
         self.presenter.restart_app()
@@ -1692,6 +1869,7 @@ class MainView:
                 state="disabled" if busy else "normal",
                 text="Đang cập nhật…" if busy else "Cập nhật",
             )
+            self.version_btn.configure(state="disabled" if busy else "normal")
 
         self.invoke(apply)
 
@@ -1702,6 +1880,15 @@ class MainView:
             return current
         dialog = UpdateDialog(self)
         self._update_dialog = dialog
+        return dialog
+
+    def open_version_dialog(self) -> VersionDialog:
+        current = self._version_dialog
+        if current is not None and current.alive:
+            current.lift()
+            return current
+        dialog = VersionDialog(self)
+        self._version_dialog = dialog
         return dialog
 
     def open_notes_dialog(self, notes: str) -> NotesDialog:
@@ -1919,7 +2106,7 @@ class MainView:
                 selectcolor=colors["panel"],
                 highlightthickness=0,
             )
-        for button in (self.open_log_btn, self.purge_btn, self.update_btn, self.restart_btn):
+        for button in (self.open_log_btn, self.purge_btn, self.update_btn, self.version_btn, self.restart_btn):
             button.configure(
                 bg=colors["panel"],
                 fg=colors["text"],
@@ -1933,12 +2120,15 @@ class MainView:
             state="disabled" if self._update_busy else "normal",
             text="Đang cập nhật…" if self._update_busy else "Cập nhật",
         )
+        self.version_btn.configure(state="disabled" if self._update_busy else "normal")
 
     def _paint(self) -> None:
         colors = self.colors
         running = self.presenter.running
         if self._update_dialog is not None and self._update_dialog.alive:
             self._update_dialog.apply_colors()
+        if self._version_dialog is not None and self._version_dialog.alive:
+            self._version_dialog.apply_colors()
         if self._notes_dialog is not None and self._notes_dialog.alive:
             self._notes_dialog.apply_colors()
         self.root.configure(bg=colors["bg"])
