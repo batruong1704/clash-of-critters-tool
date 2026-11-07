@@ -408,6 +408,7 @@ def main() -> int:
         ("chờ cá cắn (ảnh 4)", _png("4."), "wait"),
         ("Reel it in (video 612)", frame(612), "reel"),
         ("Reel it in (ảnh 5)", _png("5."), "reel"),
+        ("Reel it in khi cần che nút (ảnh 10)", _png("10."), "reel"),
         ("thanh trượt (video 640)", frame(640), "slider"),
         ("thanh trượt (ảnh 6)", _png("6."), "slider"),
         ("Cool, chuyển cảnh (video 672)", frame(672), "busy"),

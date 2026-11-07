@@ -115,14 +115,18 @@ def ring_kind(img) -> str:
         x = int(REF_W * BUTTON[0] + REF_W * RING_RADIUS * np.cos(a))
         y = int(REF_H * BUTTON[1] + REF_W * RING_RADIUS * np.sin(a))
         samples.append(hsv[y - 3 : y + 4, x - 3 : x + 4].reshape(-1, 3).mean(axis=0))
-    h, s, v = np.median(np.array(samples), axis=0)
+    arr = np.array(samples)
+    h, s, v = np.median(arr, axis=0)
     if v < 90:
         return "dim"
     if 44 <= h <= 62 and s > 140 and v > 150:
         return "idle"
     if s < 45 and 60 <= v <= 170:
         return "wait"
-    if 130 <= h <= 152 and v > 150:
+    # Nút tím. Trung vị hue đủ khi cả vòng sạch. Cần câu đè nửa nút kéo trung vị xuống 128
+    # (máy khách 2026-11-08, ngưỡng cũ 130 bỏ qua màn Reel it in). Năm mẫu tím sáng vẫn là nút tím.
+    purple = (arr[:, 0] >= 125) & (arr[:, 0] <= 155) & (arr[:, 1] > 140) & (arr[:, 2] > 150)
+    if int(purple.sum()) >= 5 or (130 <= h <= 152 and v > 150):
         return "purple"
     return "other"
 
@@ -184,7 +188,9 @@ def read_scene(img, templates: Templates) -> Scene:
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         if _fraction(hsv, (0.0, 0.41, 1.0, 0.54), (5, 18), 150, 200) > 0.45:
             return Scene("timesup", ring)
-        if _fraction(hsv, (0.24, 0.595, 0.78, 0.69), (125, 160), 90, 90) > 0.25:
+        # 0,25 bỏ sót màn Reel it in khi cần che bảng chữ: máy khách đo được 0,24. Thanh trượt và
+        # cảnh chuyển ở cùng nút tím chỉ còn 0,00 nên 0,18 không nuốt hai màn đó.
+        if _fraction(hsv, (0.24, 0.595, 0.78, 0.69), (125, 160), 90, 90) > 0.18:
             return Scene("reel", ring)
         slider = read_slider(img)
         detail = {"slider": slider, "flash": read_flash(img, hsv)}
