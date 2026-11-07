@@ -23,8 +23,8 @@ Chạy dòng lệnh (không mở cửa sổ): `py -3 tools/run_live.py <số_lư
 | Màn | Nhận ra bằng | Việc tool làm |
 |---|---|---|
 | Chờ quăng | Nút câu **xanh lá** | Kiểm hệ số, đọc số rod, bấm nút câu |
-| Chờ cá cắn | Nút **xám** | Chờ |
-| Reel it in | Nút tím và bảng tím "Now! Reel it in!" | Bấm nút tím một lần |
+| Chờ cá cắn | Nút **xám** | Chụp liên tục, không nghỉ, để khỏi lỡ lúc cá cắn |
+| Reel it in | Nút tím và bảng tím "Now! Reel it in!" | Bấm nút tím ngay khi thấy thanh vàng |
 | Thanh trượt | Nút tím, thanh tối có vùng vàng và mồi đỏ | Dò tốc độ mồi, bấm khi mồi vào giữa vùng vàng. Trượt thì bấm lại. Có thể 0, 1 hoặc nhiều thanh liên tiếp |
 | Time's up | Băng cam giữa màn | Ghi thất bại, chờ game tự về |
 | Kết quả | Nút câu **tối** | Đọc Gold (hiện thoáng khi phá kỷ lục), ghi lượt thành công, rồi bấm bỏ qua |

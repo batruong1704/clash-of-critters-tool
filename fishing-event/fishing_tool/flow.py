@@ -187,6 +187,11 @@ class Runner:
         self._mult_misses = 0
         self._nav_hold = 0.0
         self._reel_tap = 0.0
+        # Chờ cá cắn thì chụp liên tục (raw) để bấm ngay khi thanh vàng hiện. Tắt nếu luồng đó không nhanh hơn
+        # chụp thường, hoặc adb giả không có luồng ảnh.
+        self._rush_bite = False
+        self._in_rush = False
+        self._raw_watch = True
         self._timesup_since: float | None = None
         self._result_tap = 0.0
 
@@ -336,6 +341,9 @@ class Runner:
     def _loop(self) -> None:
         while True:
             self._check()
+            if self._rush_bite:
+                self._watch_bite()
+                continue
             if self._flash_due is not None:
                 # Vừa bấm: chờ tới lúc chữ dự kiến nổ rồi mới chụp, để ảnh này trả lời được trúng hay chưa.
                 if not self.quick:
@@ -343,41 +351,74 @@ class Runner:
                 self._flash_due = None
             img, started, ended = self.adb.timed_screenshot()
             self._shot_dur += 0.3 * ((ended - started) - self._shot_dur)
-            img = normalize(img)
-            scene = read_scene(img, self.templates)
-            self._track_unknown(scene, img)
-            if scene.kind != self._last_kind:
-                self._trace(f"màn {scene.kind} (chụp {started - self._t0:.2f}-{ended - self._t0:.2f}s)")
-                self._last_kind = scene.kind
-            if scene.kind != "wait":
-                self._wait_since = None
-            if scene.kind in ("wait", "reel", "slider") and not self._cast_open:
-                # Cần đã được quăng mà tool không bấm (bắt đầu giữa chừng, hoặc cú bấm bỏ qua kết quả rơi vào nút câu).
-                # Đã có lệnh dừng thì không nhận thêm lượt mới.
-                if self.stop.is_set():
-                    raise Stopped()
-                self.stats.casts += 1
-                self._cast_open = True
-                self._cast_started = time.time()
-                self._begin_cast_clock()
-                self._cast_taps = 0
-                self._prepare_cast_taps()
-                self._fished = False
-                self._seen_gold.clear()
-                self.log(f"Lượt {self.stats.casts}: cần đã được quăng ngoài tool.")
-                self.on_stats(self.stats)
-            if scene.kind in ("wait", "reel", "slider", "busy"):
-                self._fished = True
-            # Chữ vàng chỉ hiện chưa tới 1 giây, ngay lúc chuyển từ Cool! sang màn kết quả.
-            if self._fished and scene.kind in ("busy", "unknown", "result"):
-                self._note_gold(img)
-            if scene.kind in ("wait", "reel", "slider", "busy", "timesup", "result"):
-                self._progressed = True
-            if scene.kind not in ("result", "timesup"):
-                self._dismiss_count = 0
-            if scene.kind != "timesup":
-                self._timesup_since = None
-            getattr(self, f"_on_{scene.kind}")(img, scene, started, ended)
+            self._handle_frame(img, started, ended)
+
+    def _watch_bite(self) -> None:
+        """Chụp liên tục đến khi màn không còn là chờ cá cắn, rồi xử lý đúng ảnh đó.
+
+        Ảnh trong luồng này không đưa vào ước lượng thời gian chụp: luồng raw nhanh hơn PNG, trộn vào sẽ
+        làm tool canh sai lúc chữ nổ.
+        """
+        self._rush_bite = False
+        self._in_rush = True
+        self._trace("chờ cá cắn: chụp liên tục để khỏi lỡ thanh vàng")
+        try:
+            for img, started, ended in self.adb.frames():
+                self._check()
+                if ended - started > max(self._shot_dur, 0.25) + 0.08:
+                    self._raw_watch = False
+                    self._trace(
+                        f"chụp liên tục {ended - started:.2f}s/ảnh, không nhanh hơn chụp thường "
+                        f"{self._shot_dur:.2f}s: quay lại chụp từng ảnh"
+                    )
+                    self._handle_frame(img, started, ended)
+                    return
+                scene = self._handle_frame(img, started, ended)
+                if scene.kind != "wait":
+                    return
+        except (OSError, ValueError):
+            self._raw_watch = False
+            self._trace("chụp liên tục lỗi: quay lại chụp từng ảnh")
+        finally:
+            self._in_rush = False
+
+    def _handle_frame(self, img, started: float, ended: float):
+        img = normalize(img)
+        scene = read_scene(img, self.templates)
+        self._track_unknown(scene, img)
+        if scene.kind != self._last_kind:
+            self._trace(f"màn {scene.kind} (chụp {started - self._t0:.2f}-{ended - self._t0:.2f}s)")
+            self._last_kind = scene.kind
+        if scene.kind != "wait":
+            self._wait_since = None
+        if scene.kind in ("wait", "reel", "slider") and not self._cast_open:
+            # Cần đã được quăng mà tool không bấm (bắt đầu giữa chừng, hoặc cú bấm bỏ qua kết quả rơi vào nút câu).
+            # Đã có lệnh dừng thì không nhận thêm lượt mới.
+            if self.stop.is_set():
+                raise Stopped()
+            self.stats.casts += 1
+            self._cast_open = True
+            self._cast_started = time.time()
+            self._begin_cast_clock()
+            self._cast_taps = 0
+            self._prepare_cast_taps()
+            self._fished = False
+            self._seen_gold.clear()
+            self.log(f"Lượt {self.stats.casts}: cần đã được quăng ngoài tool.")
+            self.on_stats(self.stats)
+        if scene.kind in ("wait", "reel", "slider", "busy"):
+            self._fished = True
+        # Chữ vàng chỉ hiện chưa tới 1 giây, ngay lúc chuyển từ Cool! sang màn kết quả.
+        if self._fished and scene.kind in ("busy", "unknown", "result"):
+            self._note_gold(img)
+        if scene.kind in ("wait", "reel", "slider", "busy", "timesup", "result"):
+            self._progressed = True
+        if scene.kind not in ("result", "timesup"):
+            self._dismiss_count = 0
+        if scene.kind != "timesup":
+            self._timesup_since = None
+        getattr(self, f"_on_{scene.kind}")(img, scene, started, ended)
+        return scene
 
     # ----- từng màn -----
 
@@ -456,7 +497,9 @@ class Runner:
         elif now - self._wait_since > WAIT_WARN:
             self.log("Chờ cá cắn quá lâu. Vẫn tiếp tục chờ.")
             self._wait_since = now
-        self._pause(0.1)
+        # Thanh vàng hiện khoảng hơn nửa giây. Chụp PNG rồi nghỉ 0,1s thì cú bấm rơi vào cuối thanh.
+        if self._raw_watch and not self._in_rush and hasattr(self.adb, "frames"):
+            self._rush_bite = True
 
     def _on_reel(self, img, scene, started, ended) -> None:
         now = time.time()
@@ -468,7 +511,8 @@ class Runner:
         self.adb.tap_fast(*BUTTON_XY)
         self._reel_tap = time.time()
         self._reset_slider()
-        self._pause(0.3)
+        # Khóa 0,9s ở trên chặn cú bấm thứ hai khi thanh còn đó. Nghỉ ngắn chỉ để lệnh bấm kịp ra.
+        self._pause(0.05)
 
     def _on_busy(self, img, scene, started, ended) -> None:
         slider = (scene.detail or {}).get("slider")

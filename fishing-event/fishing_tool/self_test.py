@@ -411,6 +411,36 @@ def main() -> int:
     for name, img, want in scenes:
         check(name, read_scene(img, templates).kind, want)
 
+    import threading
+    import time
+
+    from fishing_tool.device import decode_raw_frame
+    from fishing_tool.flow import Runner
+
+    red = np.array([255, 0, 0, 255, 0, 255, 0, 255], np.uint8).tobytes()  # đỏ, lục
+    got = decode_raw_frame(red, 2, 1)
+    check("ảnh raw đổi đúng kênh đỏ và lục", (int(got[0, 0, 2]), int(got[0, 1, 1])), (255, 255))
+
+    class _BiteAdb:
+        def __init__(self):
+            self.taps = 0
+
+        def frames(self):
+            now = time.time()
+            yield _png("4."), now, now + 0.05  # chờ cá cắn
+            now = time.time()
+            yield _png("5."), now, now + 0.05  # thanh vàng
+
+        def tap_fast(self, x, y):
+            self.taps += 1
+
+    bite = _BiteAdb()
+    watcher = Runner(bite, lambda _text: None, threading.Event(), 1, learn=False)
+    watcher._t0 = time.time()
+    watcher._watch_bite()
+    check("thấy thanh vàng thì bấm ngay, không bấm lúc còn chờ", bite.taps, 1)
+    check("chụp liên tục xong thì không còn kẹt trong vòng đó", watcher._in_rush, False)
+
     slider = read_scene(frame(640), templates).detail["slider"]
     check("vùng vàng video 640", (slider.lo // 5 * 5, slider.hi // 5 * 5), (290, 435))
     print(f"     mồi ở {slider.pointer:.0f}")
