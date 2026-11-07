@@ -16,7 +16,7 @@ Chạy dòng lệnh (không mở cửa sổ): `py -3 tools/run_live.py <số_lư
 ## Thông số
 
 - **Số lượt câu**: tool quăng đủ N lần (mỗi lần quăng tính một lượt) rồi dừng. Hết rod thì dừng sớm.
-- **Hệ số**: ô chọn có x1, x2, x3, x5, x10. Để trống là x1. Vòng trong game còn x20, x50, x100 rồi quay về x1. Mỗi lần bấm viên hệ số chỉ nhảy một bậc.
+- **Hệ số**: ô chọn có x1, x2, x3, x5, x10, x20, x50. Để trống là x1. Vòng trong game còn x100 rồi quay về x1. Mỗi lần bấm viên hệ số chỉ nhảy một bậc; hệ số xN tốn N rod mỗi lần quăng, thiếu rod thì tool dừng ngay khi quăng.
 
 ## Một lượt chạy thế nào
 

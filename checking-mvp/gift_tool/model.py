@@ -20,7 +20,8 @@ SCAN_COUNT_DEFAULT = 100
 SCAN_COUNT_MAX = 5000
 FISHING_DIR = Path(__file__).resolve().parent.parent.parent / "fishing-event"
 RALLY_DIR = Path(__file__).resolve().parent.parent.parent / "auto-join-rally"
-FISHING_MULTIPLIERS = ("1", "2", "3", "5", "10")
+# Vòng đổi hệ số của game: x1, x2, x3, x5, x10, x20, x50, x100. Mỗi hệ số cần ảnh mẫu templates/mult_N.png.
+FISHING_MULTIPLIERS = ("1", "2", "3", "5", "10", "20", "50")
 FISHING_CASTS_DEFAULT = 10
 FISHING_CASTS_MAX = 100000
 
