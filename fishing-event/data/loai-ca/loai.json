@@ -37,13 +37,13 @@
   },
   {
     "file": "vang/Cá Đuôi Đỏ.png",
-    "name": "Cá Đui Đỏ",
+    "name": "Cá Đuôi Đỏ",
     "kind": "ca",
     "rarity": "vang"
   },
   {
     "file": "vang/Cá Mập Giày.png",
-    "name": "Tung tung sahur",
+    "name": "Cá Mập Giày",
     "kind": "ca",
     "rarity": "vang"
   },
@@ -151,7 +151,7 @@
   },
   {
     "file": "xanh/Cá Chép.png",
-    "name": "Cá Chiếp",
+    "name": "Cá Chép",
     "kind": "ca",
     "rarity": "xanh"
   },
@@ -235,13 +235,13 @@
   },
   {
     "file": "xanh/Ếch đâyyy.png",
-    "name": "Ếch đâyyy, câu t chi má!",
+    "name": "Ếch",
     "kind": "ca",
     "rarity": "xanh"
   },
   {
     "file": "xanh/Cá Chép 2.png",
-    "name": "Cá Chiếp",
+    "name": "Cá Chép",
     "kind": "ca",
     "rarity": "xanh"
   },
